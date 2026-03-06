@@ -43,7 +43,8 @@ def calculate_features(df):
     df['ema200'] = ta.ema(df['close'], length=200)
     df['rsi'] = ta.rsi(df['close'], length=14)
     df['macd'] = ta.macd(df['close'])['MACD_12_26_9']
-    df['bb_lower'] = ta.bbands(df['close'], length=20, std=2.0)['BBL_20_2.0']
+    bb = ta.bbands(df['close'], length=20, std=2.0)
+    df['bb_lower'] = bb['BBL_20_2.0']
     df['price_change'] = df['close'].pct_change()
     return df.dropna()
 
