@@ -2,6 +2,7 @@ ccxt
 pandas
 pandas-ta
 plotly
+kaleido
 catboost
 python-telegram-bot==21.4
 flask
