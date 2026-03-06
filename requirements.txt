@@ -1,0 +1,8 @@
+ccxt
+pandas
+pandas-ta
+plotly
+catboost
+python-telegram-bot==21.4
+flask
+requests
