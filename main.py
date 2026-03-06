@@ -10,8 +10,8 @@ from keep_alive import keep_alive
 import threading
 
 # === КЛЮЧИ ===
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-CHAT_ID = os.getenv('CHAT_ID')
+TELEGRAM_TOKEN = os.getenv(7603082014:AAFYIowDNZBZGzahnkHsfPjkm-cEkc5Jmak)
+CHAT_ID = os.getenv(754858892)
 MEXC_API_KEY = os.getenv('MEXC_API_KEY')
 MEXC_API_SECRET = os.getenv('MEXC_API_SECRET')
 
