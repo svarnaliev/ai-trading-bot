@@ -4,13 +4,12 @@ import ccxt
 import pandas as pd
 import pandas_ta as ta
 import plotly.graph_objects as go
-import threading
 from datetime import datetime
 from telegram import Bot
-from flask import Flask
-import numpy as np
+from keep_alive import keep_alive
+import threading
 
-# === КЛЮЧИ ИЗ ПЕРЕМЕННЫХ RAILWAY ===
+# === КЛЮЧИ ===
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
 MEXC_API_KEY = os.getenv('MEXC_API_KEY')
@@ -23,7 +22,7 @@ exchange = ccxt.mexc({
     'enableRateLimit': True,
 })
 
-PAIRS = ['ENA/USDT', 'BTC/USDT', 'ETH/USDT']  # добавляй свои монеты
+PAIRS = ['ENA/USDT', 'BTC/USDT', 'ETH/USDT']  # добавляй свои
 TIMEFRAME = '1h'
 INTERVAL = 900  # 15 минут
 
@@ -39,7 +38,7 @@ def calculate_features(df):
     df['macd'] = ta.macd(df['close'])['MACD_12_26_9']
     return df
 
-async def send_signal(pair, price, confidence, score, target1, target2):
+def send_signal(pair, price, confidence, score, target1, target2):
     df = get_data(pair)
     df = calculate_features(df)
     
@@ -66,7 +65,7 @@ x200 / 11440$ / 145.8M / -0.0021
 Общий Score: {int(confidence + score)}"""
 
     with open('chart.png', 'rb') as photo:
-        await bot.send_photo(chat_id=CHAT_ID, photo=photo, caption=text)
+        bot.send_photo(chat_id=CHAT_ID, photo=photo, caption=text)
 
 def trading_loop():
     while True:
@@ -81,16 +80,14 @@ def trading_loop():
                     score = 62
                     target1 = round(price * 0.88, 6)
                     target2 = round(price * 0.84, 6)
-                    import asyncio
-                    asyncio.run(send_signal(pair, price, confidence, score, target1, target2))
+                    send_signal(pair, price, confidence, score, target1, target2)
                     print(f"✅ Сигнал отправлен по {pair}")
             except Exception as e:
-                print(e)
+                print(f"Ошибка по {pair}: {e}")
         time.sleep(INTERVAL)
 
 # === ЗАПУСК ===
 if __name__ == '__main__':
-    from keep_alive import keep_alive
     keep_alive()
     print("🚀 Бот запущен на Railway!")
     trading_loop()
