@@ -40,12 +40,22 @@ def get_data(symbol, limit=1000):
     return df
 
 def calculate_features(df):
+    # EMA200
     df['ema200'] = ta.ema(df['close'], length=200)
+    
+    # RSI
     df['rsi'] = ta.rsi(df['close'], length=14)
+    
+    # MACD
     df['macd'] = ta.macd(df['close'])['MACD_12_26_9']
+    
+    # Bollinger Bands — БЕЗОПАСНЫЙ способ (работает в любой версии pandas_ta)
     bb = ta.bbands(df['close'], length=20, std=2.0)
-    df['bb_lower'] = bb['BBL_20_2.0']
+    df['bb_lower'] = bb.iloc[:, 0]   # первая колонка всегда = нижняя полоса
+    
+    # Дополнительная фича
     df['price_change'] = df['close'].pct_change()
+    
     return df.dropna()
 
 # === ОБУЧЕНИЕ МОДЕЛИ (раз в день) ===
