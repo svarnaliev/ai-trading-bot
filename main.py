@@ -30,7 +30,7 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.2
+PROBABILITY_THRESHOLD = 0.25
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change']
 
@@ -50,9 +50,7 @@ futures_exchange = ccxt.mexc({
     'apiKey': MEXC_API_KEY,
     'secret': MEXC_API_SECRET,
     'enableRateLimit': True,
-    'options': {
-        'defaultType': 'swap',
-    },
+    'options': {'defaultType': 'swap'},
 })
 
 PAIRS = []
@@ -78,6 +76,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     df['ema200']       = ta.ema(df['close'], length=200)
+    df['ema21']        = ta.ema(df['close'], length=21)   # для усреднения
     df['rsi']          = ta.rsi(df['close'], length=14)
     df['macd']         = ta.macd(df['close'])['MACD_12_26_9']
     bb                 = ta.bbands(df['close'], length=20, std=2.0)
@@ -93,26 +92,22 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 # ────────────────────────────────────────────────
 
 def load_or_train_model() -> CatBoostClassifier:
-    # Принудительно удаляем старую модель
     if os.path.exists(MODEL_FILE):
-        try:
-            print("Удаляем старую модель для переобучения на фьючерсах...")
-            os.remove(MODEL_FILE)
-        except Exception as e:
-            print(f"Не удалось удалить старую модель: {e}")
+        print("Удаляем старую модель для переобучения...")
+        os.remove(MODEL_FILE)
 
-    print("Обучение модели на фьючерсных данных...")
-    all_data = []
+    print("Обучение модели на фьючерсах + сегодняшних памп-альтах...")
     training_pairs = [
-        'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
-        'BNB/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT', 'AVAX/USDT:USDT',
-        'TRX/USDT:USDT', 'TON/USDT:USDT', 'NEAR/USDT:USDT', 'SUI/USDT:USDT',
-        'PEPE/USDT:USDT', 'WIF/USDT:USDT', 'BONK/USDT:USDT', 'POPCAT/USDT:USDT',
-        'GME/USDT:USDT', 'MOODENG/USDT:USDT', 'BRETT/USDT:USDT', 'MICHI/USDT:USDT',
-        'GOAT/USDT:USDT', 'FARTCOIN/USDT:USDT', 'BANANAS31/USDT:USDT', 'PIPPIN/USDT:USDT',
-        'POWER/USDT:USDT', 'SPX6900/USDT:USDT', 'AERO/USDT:USDT', 'JUP/USDT:USDT',
-        'PUMP/USDT:USDT', 'JELLYJELLY/USDT:USDT', 'PENGU/USDT:USDT', 'PNUT/USDT:USDT'
+        'BTC/USDT:USDT','ETH/USDT:USDT','SOL/USDT:USDT','XRP/USDT:USDT',
+        'BNB/USDT:USDT','ADA/USDT:USDT','DOGE/USDT:USDT','AVAX/USDT:USDT',
+        'TRX/USDT:USDT','TON/USDT:USDT','NEAR/USDT:USDT','SUI/USDT:USDT',
+        'PEPE/USDT:USDT','WIF/USDT:USDT','BONK/USDT:USDT','POPCAT/USDT:USDT',
+        'POWER/USDT:USDT','SPX6900/USDT:USDT','BANANAS31/USDT:USDT','PIPPIN/USDT:USDT',
+        'AERO/USDT:USDT','JUP/USDT:USDT','PUMP/USDT:USDT','MOODENG/USDT:USDT',
+        'GOAT/USDT:USDT','FARTCOIN/USDT:USDT','KITE/USDT:USDT','MICHI/USDT:USDT',
+        'BRETT/USDT:USDT','PNUT/USDT:USDT','GME/USDT:USDT'
     ]
+    all_data = []
     for symbol in training_pairs:
         df = fetch_ohlcv(symbol)
         df = add_features(df)
@@ -154,13 +149,51 @@ def get_market_data(symbol: str):
 
 
 # ────────────────────────────────────────────────
+#  График с линиями усреднения
+# ────────────────────────────────────────────────
+
+def create_chart(pair: str, entry_price: float, ema21: float) -> io.BytesIO | None:
+    df = fetch_ohlcv(pair)
+    if df.empty: return None
+    df = add_features(df)
+    if df.empty: return None
+
+    tp1 = round(entry_price * 0.95, 6)
+    tp2 = round(entry_price * 0.90, 6)
+
+    fig, ax = plt.subplots(figsize=(10, 6), facecolor='#0d1117')
+
+    ax.plot(df['timestamp'], df['close'], color='#00ff9d', linewidth=2, label='Цена')
+    ax.plot(df['timestamp'], df['ema200'], color='#ff4444', linewidth=1.8, label='EMA200')
+
+    # Линии
+    ax.axhline(entry_price, color='white', linestyle='--', linewidth=1.3, label='Вход')
+    ax.axhline(tp1, color='#00ff00', linestyle='-', linewidth=1.1, label='Цель 1')
+    ax.axhline(tp2, color='#00cc00', linestyle='-', linewidth=1.1, label='Цель 2')
+    ax.axhline(ema21, color='orange', linestyle='--', linewidth=1.3, label='Усреднение (EMA21)')
+
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b %H:%M'))
+    plt.xticks(rotation=45)
+    ax.grid(True, alpha=0.15, color='gray')
+    ax.set_title(f'{pair} — Разворот ВНИЗ', color='white', fontsize=14)
+    ax.legend(loc='upper left', fontsize=9)
+    ax.tick_params(colors='white')
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', facecolor='#0d1117', bbox_inches='tight', dpi=130)
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+
+# ────────────────────────────────────────────────
 #  Сигнал
 # ────────────────────────────────────────────────
 
-def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change: float) -> str:
+def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change: float, ema21: float) -> str:
     coin = pair.split('/')[0].replace(':USDT', '')
     strength = "СИЛЬНЫЙ" if prob > 0.85 else "СРЕДНИЙ" if prob > 0.75 else "СЛАБЫЙ"
-    fires    = "🔥🔥🔥" if prob > 0.85 else "🔥🔥" if prob > 0.75 else "🔥"
+    fires = "🔥🔥🔥" if prob > 0.85 else "🔥🔥" if prob > 0.75 else "🔥"
     pos_size = round(price * 200 * 50, 0)
 
     return f"""🔴 {coin} {fires} {strength}
@@ -174,111 +207,51 @@ Trade: Mexc Futures
 Текущая цена: {price}
 Цель 1: {round(price * 0.95, 6)}
 Цель 2: {round(price * 0.90, 6)}
+Усреднение: на EMA21 ≈ {round(ema21, 6)}
 
 Уверенность: {int(prob * 100)}%
 Сила сигнала: {int(prob * 100 - 20)}/100
 Общий Score: {int(prob * 100 + int(prob * 100 - 20))}"""
 
 
-def create_chart(pair: str) -> io.BytesIO | None:
-    df = fetch_ohlcv(pair)
-    if df.empty: return None
-    df = add_features(df)
-    if df.empty: return None
-
-    fig, ax = plt.subplots(figsize=(10, 6), facecolor='#0d1117')
-
-    ax.plot(df['timestamp'], df['close'], color='#00ff9d', linewidth=2, label='Цена')
-    ax.plot(df['timestamp'], df['ema200'], color='#ff4444', linewidth=1.8, label='EMA200')
-
-    ax_vol = ax.twinx()
-    ax_vol.bar(df['timestamp'], df['volume'], color='gray', alpha=0.35, width=0.0008)
-
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b %H:%M'))
-    plt.xticks(rotation=45)
-    ax.grid(True, alpha=0.15, color='gray')
-
-    ax.set_title(f'{pair} — Разворот ВНИЗ', color='white', fontsize=14, pad=15)
-    ax.set_facecolor('#0d1117')
-    ax.tick_params(colors='white')
-    ax_vol.tick_params(colors='gray')
-    ax.legend(loc='upper left', fontsize=10)
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', facecolor='#0d1117', bbox_inches='tight', dpi=120)
-    buf.seek(0)
-    plt.close(fig)
-    return buf
-
-
 def send_signal(pair: str, price: float, prob: float, vol_m: float, change: float):
-    if vol_m < 1:
-        print(f"Пропуск {pair} — объём {vol_m}M < 1M")
-        return
+    df = fetch_ohlcv(pair)
+    if df.empty: return
+    df = add_features(df)
+    if df.empty: return
+    ema21 = df['ema21'].iloc[-1]
 
-    if change <= -30:
-        print(f"Пропуск {pair} — уже упала на {change:.2f}%")
-        return
-
-    text = build_signal_text(pair, price, prob, vol_m, change)
-    buf = create_chart(pair)
-    if buf is None:
-        print(f"График не создан: {pair}")
-        return
+    text = build_signal_text(pair, price, prob, vol_m, change, ema21)
+    buf = create_chart(pair, price, ema21)
 
     try:
         bot.send_photo(chat_id=CHAT_ID, photo=buf, caption=text)
-        print(f"Сигнал отправлен → {pair}  ({int(prob*100)}%)")
+        print(f"Сигнал отправлен → {pair} ({int(prob*100)}%) | Усреднение на EMA21 ≈ {round(ema21, 6)}")
     except Exception as e:
         print(f"Ошибка отправки {pair}: {e}")
 
 
 # ────────────────────────────────────────────────
-#  Обновление списка пар
+#  Обновление списка пар и цикл
 # ────────────────────────────────────────────────
 
 def update_pairs_list():
     try:
         markets = futures_exchange.load_markets(reload=True)
-
-        futures_pairs = []
-        for symbol, market in markets.items():
-            if market.get('swap', False) and market.get('linear', False) and 'USDT' in symbol and market.get('active', True):
-                futures_pairs.append(symbol)
-
-        sorted_pairs = sorted(
-            futures_pairs,
-            key=lambda s: float(markets[s].get('info', {}).get('quoteVolume', '0') or 0),
-            reverse=True
-        )
-
+        futures_pairs = [s for s, m in markets.items() if m.get('swap') and m.get('linear') and 'USDT' in s and m.get('active')]
+        sorted_pairs = sorted(futures_pairs, key=lambda s: float(markets[s].get('info', {}).get('quoteVolume', 0) or 0), reverse=True)
         PAIRS[:] = sorted_pairs[:1000]
-
         print(f"Загружено {len(PAIRS)} USDT-M Perpetual Futures пар")
-        if len(PAIRS) > 0:
-            print("Первые 5:", PAIRS[:5])
-
     except Exception as e:
         print(f"Ошибка обновления списка: {e}")
 
-
-# ────────────────────────────────────────────────
-#  Основной цикл
-# ────────────────────────────────────────────────
 
 def main_loop():
     model = load_or_train_model()
     last_retrain = time.time()
 
     print("Тест Telegram...")
-    try:
-        bot.send_message(
-            chat_id=CHAT_ID,
-            text=f"🤖 Бот запущен (Futures) | {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        )
-        print("Тестовое сообщение отправлено!")
-    except Exception as e:
-        print(f"Telegram ошибка: {e}")
+    bot.send_message(chat_id=CHAT_ID, text=f"🤖 Бот запущен (Futures) | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     while True:
         update_pairs_list()
@@ -287,8 +260,7 @@ def main_loop():
             try:
                 df = fetch_ohlcv(pair)
                 df = add_features(df)
-                if len(df) < MIN_DATA_LENGTH:
-                    continue
+                if len(df) < MIN_DATA_LENGTH: continue
 
                 row = df.iloc[-1]
                 feats = row[FEATURES].values.reshape(1, -1)
@@ -306,7 +278,6 @@ def main_loop():
             time.sleep(0.4)
 
         if time.time() - last_retrain > 6 * 3600:
-            print("Переобучение модели...")
             model = load_or_train_model()
             last_retrain = time.time()
 
