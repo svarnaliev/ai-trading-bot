@@ -9,3 +9,4 @@ scikit-learn
 matplotlib
 numpy
 python-telegram-bot[all]  # на всякий случай, но основной фикс — urllib3<2
+flask
