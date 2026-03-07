@@ -30,7 +30,7 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.20
+PROBABILITY_THRESHOLD = 0.25
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change']
 
@@ -93,11 +93,10 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 # ────────────────────────────────────────────────
 
 def load_or_train_model() -> CatBoostClassifier:
+    # Принудительно удаляем старую модель, чтобы переобучить на фьючерсах
     if os.path.exists(MODEL_FILE):
-        print("Загружаем модель...")
-        model = CatBoostClassifier()
-        model.load_model(MODEL_FILE)
-        return model
+        print("Удаляем старую модель для переобучения на фьючерсах...")
+        os.remove(MODEL_FILE)
 
     print("Обучение модели на фьючерсных данных...")
     all_data = []
