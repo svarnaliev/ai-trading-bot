@@ -30,7 +30,7 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.25
+PROBABILITY_THRESHOLD = 0.4
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change']
 
@@ -106,7 +106,12 @@ def load_or_train_model() -> CatBoostClassifier:
     training_pairs = [
         'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
         'BNB/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT', 'AVAX/USDT:USDT',
-        'TRX/USDT:USDT', 'TON/USDT:USDT', 'NEAR/USDT:USDT', 'SUI/USDT:USDT'
+        'TRX/USDT:USDT', 'TON/USDT:USDT', 'NEAR/USDT:USDT', 'SUI/USDT:USDT',
+        'PEPE/USDT:USDT', 'WIF/USDT:USDT', 'BONK/USDT:USDT', 'POPCAT/USDT:USDT',
+        'GME/USDT:USDT', 'MOODENG/USDT:USDT', 'BRETT/USDT:USDT', 'MICHI/USDT:USDT',
+        'GOAT/USDT:USDT', 'FARTCOIN/USDT:USDT', 'BANANAS31/USDT:USDT', 'PIPPIN/USDT:USDT',
+        'POWER/USDT:USDT', 'SPX6900/USDT:USDT', 'AERO/USDT:USDT', 'JUP/USDT:USDT',
+        'PUMP/USDT:USDT', 'JELLYJELLY/USDT:USDT', 'PENGU/USDT:USDT', 'PNUT/USDT:USDT'
     ]
     for symbol in training_pairs:
         df = fetch_ohlcv(symbol)
