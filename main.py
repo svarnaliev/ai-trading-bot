@@ -44,26 +44,43 @@ def calculate_features(df):
     df['price_change'] = df['close'].pct_change()
     return df.dropna()
 
-# Обучение модели (один раз)
-if not os.path.exists(MODEL_FILE):
+# === ПОЛНОЕ ОБУЧЕНИЕ МОДЕЛИ ===
+def train_model():
     print("Обучаем модель...")
-    # (тот же блок обучения — оставляем как есть)
-    model = CatBoostClassifier(iterations=500, depth=6, learning_rate=0.05, verbose=0)
-    # ... (полный блок обучения из предыдущей версии)
+    all_df = pd.DataFrame()
+    training_pairs = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT', 'ADA/USDT']
+    for pair in training_pairs:
+        df = get_data(pair)
+        df = calculate_features(df)
+        df['target'] = np.where((df['close'].shift(-1) < df['ema200'].shift(-1)) & (df['price_change'].shift(-1) < -0.01), 1, 0)
+        all_df = pd.concat([all_df, df.dropna()])
+    
+    features = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change']
+    X = all_df[features]
+    y = all_df['target']
+    
+    model = CatBoostClassifier(iterations=500, depth=6, learning_rate=0.05, verbose=0, random_state=42)
+    model.fit(X, y)
+    
+    print(f"Модель обучена! Accuracy на обучающих данных: {model.score(X, y):.2f}")
     model.save_model(MODEL_FILE)
+    return model
+
+# Загружаем или обучаем
+if not os.path.exists(MODEL_FILE):
+    model = train_model()
 else:
     model = CatBoostClassifier()
     model.load_model(MODEL_FILE)
-    print("Модель загружена")
+    print("✅ Модель загружена из файла")
 
 def get_market_info(symbol):
     try:
         ticker = exchange.fetch_ticker(symbol)
         price = ticker['last']
-        change = ticker['percentage'] or 0
-        volume = ticker['quoteVolume'] or 0
-        # Примерная капитализация (для большинства альткоинов CCXT даёт quoteVolume)
-        mcap = round(volume * 10, 1)  # грубая оценка
+        change = round(ticker.get('percentage', 0), 4)
+        volume = ticker.get('quoteVolume', 0)
+        mcap = round(volume * 8 / 1_000_000, 1)  # приближённая капитализация
         return price, change, mcap
     except:
         return 0, 0, 0
@@ -71,8 +88,7 @@ def get_market_info(symbol):
 def send_signal(pair, price, prob, mcap, change):
     strength = "СИЛЬНЫЙ" if prob > 0.85 else "СРЕДНИЙ" if prob > 0.75 else "СЛАБЫЙ"
     fires = "🔥🔥🔥" if prob > 0.88 else "🔥🔥" if prob > 0.82 else "🔥"
-    
-    position_size = round(11440 / price * 200, 0)  # пример под x200
+    position_size = round(11440 / price * 200, 0)
     
     text = f"""🔴 {pair.split('/')[0]} {fires} {strength}
 
@@ -96,8 +112,8 @@ x200 / {position_size}$ / {mcap}M / {change:+.4f}%
     df = get_data(pair)
     df = calculate_features(df)
     fig, ax = plt.subplots(figsize=(10,5), facecolor='#1e1e1e')
-    ax.plot(df['timestamp'], df['close'], color='white')
-    ax.plot(df['timestamp'], df['ema200'], color='orange')
+    ax.plot(df['timestamp'], df['close'], color='white', linewidth=1.5)
+    ax.plot(df['timestamp'], df['ema200'], color='orange', linewidth=2)
     ax.set_title(f'{pair} — Разворот ВНИЗ')
     ax.grid(True, alpha=0.3)
     buf = io.BytesIO()
@@ -116,7 +132,7 @@ def trading_loop():
             PAIRS[:] = top_pairs
         except: pass
 
-        for pair in PAIRS:
+        for pair in PAIRS[:30]:  # проверяем только топ-30 для скорости
             try:
                 df = get_data(pair)
                 df = calculate_features(df)
@@ -126,16 +142,16 @@ def trading_loop():
                 features = df.iloc[-1][['ema200', 'rsi', 'macd', 'bb_lower', 'price_change']].values.reshape(1, -1)
                 prob = model.predict_proba(features)[0][1]
 
-                if prob > 0.78:  # порог чуть ниже, чтобы сигналы были
+                if prob > 0.78:
                     price, change, mcap = get_market_info(pair)
                     send_signal(pair, price, prob, mcap, change)
                     print(f"✅ СИГНАЛ {pair} — {int(prob*100)}%")
-            except Exception as e:
-                pass  # тихо пропускаем плохие пары
+            except:
+                pass
 
         time.sleep(INTERVAL)
 
 if __name__ == '__main__':
     keep_alive()
-    print("🚀 СУПЕР ИИ-БОТ ЗАПУЩЕН!")
+    print("🚀 СУПЕР ИИ-БОТ ЗАПУЩЕН И РАБОТАЕТ!")
     trading_loop()
