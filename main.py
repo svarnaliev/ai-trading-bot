@@ -10,6 +10,7 @@ import pandas_ta as ta
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 from telegram import Bot
 from catboost import CatBoostClassifier
@@ -29,13 +30,13 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.2
+PROBABILITY_THRESHOLD = 0.25   # снижено для теста — можно вернуть 0.65 позже
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change']
 
 
 # ────────────────────────────────────────────────
-#  Инициализация — отдельный exchange для фьючерсов
+#  Инициализация
 # ────────────────────────────────────────────────
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -45,21 +46,20 @@ MEXC_API_SECRET = os.getenv('MEXC_API_SECRET')
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# Exchange для фьючерсов (swap = perpetual USDT-M)
 futures_exchange = ccxt.mexc({
     'apiKey': MEXC_API_KEY,
     'secret': MEXC_API_SECRET,
     'enableRateLimit': True,
     'options': {
-        'defaultType': 'swap',  # perpetual futures
+        'defaultType': 'swap',
     },
 })
 
-PAIRS = []  # будет заполнено фьючерсами
+PAIRS = []
 
 
 # ────────────────────────────────────────────────
-#  Данные и фичи (используем futures_exchange)
+#  Данные и фичи
 # ────────────────────────────────────────────────
 
 def fetch_ohlcv(symbol: str, limit: int = 800) -> pd.DataFrame:
@@ -89,7 +89,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ────────────────────────────────────────────────
-#  Модель (обучение на споте, но предсказание на фьючерсах — ок для теста)
+#  Модель
 # ────────────────────────────────────────────────
 
 def load_or_train_model() -> CatBoostClassifier:
@@ -101,8 +101,8 @@ def load_or_train_model() -> CatBoostClassifier:
 
     print("Обучение модели...")
     all_data = []
-    training_pairs = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT',
-                      'ADA/USDT', 'DOGE/USDT', 'SHIB/USDT', 'AVAX/USDT', 'TRX/USDT']
+    training_pairs = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
+                      'ADA/USDT:USDT', 'DOGE/USDT:USDT']
     for symbol in training_pairs:
         df = fetch_ohlcv(symbol)
         df = add_features(df)
@@ -127,7 +127,7 @@ def load_or_train_model() -> CatBoostClassifier:
 
 
 # ────────────────────────────────────────────────
-#  Рыночные данные (тоже на фьючерсах)
+#  Рыночные данные
 # ────────────────────────────────────────────────
 
 def get_market_data(symbol: str):
@@ -144,16 +144,16 @@ def get_market_data(symbol: str):
 
 
 # ────────────────────────────────────────────────
-#  Сигнал (без изменений)
+#  Сигнал
 # ────────────────────────────────────────────────
 
 def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change: float) -> str:
-    coin = pair.replace('USDT', '')  # для фьючерсов без /
+    coin = pair.split('/')[0].replace(':USDT', '')
     strength = "СИЛЬНЫЙ" if prob > 0.85 else "СРЕДНИЙ" if prob > 0.75 else "СЛАБЫЙ"
     fires    = "🔥🔥🔥" if prob > 0.85 else "🔥🔥" if prob > 0.75 else "🔥"
     pos_size = round(price * 200 * 50, 0)
 
-    return f"""🔴 {coin} {fires} {strength}
+    text = f"""🔴 {coin} {fires} {strength}
 x200 / {pos_size}$ / {vol_m}M / {change:+.4f}
 
 Trade: Mexc Futures
@@ -168,6 +168,7 @@ Trade: Mexc Futures
 Уверенность: {int(prob * 100)}%
 Сила сигнала: {int(prob * 100 - 20)}/100
 Общий Score: {int(prob * 100 + int(prob * 100 - 20))}"""
+    return text
 
 
 def create_chart(pair: str) -> io.BytesIO | None:
@@ -176,23 +177,44 @@ def create_chart(pair: str) -> io.BytesIO | None:
     df = add_features(df)
     if df.empty: return None
 
-    fig, ax = plt.subplots(figsize=(10, 5), facecolor='#1e1e1e')
-    ax.plot(df['timestamp'], df['close'], color='white', lw=1.2)
-    ax.plot(df['timestamp'], df['ema200'], color='orange', lw=1.5)
-    ax.bar(df['timestamp'], df['volume'], color='gray', alpha=0.4)
-    ax.set_title(f'{pair} — Разворот ВНИЗ', color='white')
-    ax.grid(True, alpha=0.25, color='gray')
+    fig, ax = plt.subplots(figsize=(10, 6), facecolor='#0d1117')
+
+    # Цена и EMA на основной оси
+    ax.plot(df['timestamp'], df['close'], color='#00ff9d', linewidth=2, label='Цена')
+    ax.plot(df['timestamp'], df['ema200'], color='#ff4444', linewidth=1.8, label='EMA200')
+
+    # Объём внизу
+    ax_vol = ax.twinx()
+    ax_vol.bar(df['timestamp'], df['volume'], color='gray', alpha=0.35, width=0.0008)
+
+    # Форматирование оси времени
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b %H:%M'))
+    plt.xticks(rotation=45)
+    ax.grid(True, alpha=0.15, color='gray')
+
+    ax.set_title(f'{pair} — Разворот ВНИЗ', color='white', fontsize=14, pad=15)
+    ax.set_facecolor('#0d1117')
     ax.tick_params(colors='white')
+    ax_vol.tick_params(colors='gray')
+    ax.legend(loc='upper left', fontsize=10)
 
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', facecolor='#1e1e1e', bbox_inches='tight')
+    plt.savefig(buf, format='png', facecolor='#0d1117', bbox_inches='tight', dpi=120)
     buf.seek(0)
     plt.close(fig)
     return buf
 
 
 def send_signal(pair: str, price: float, prob: float, vol_m: float, change: float):
-    # if vol_m < 50: return
+    # Фильтр 1: объём слишком маленький — пропускаем
+    if vol_m < 1:
+        print(f"Пропуск {pair} — объём {vol_m}M < 1M")
+        return
+
+    # Фильтр 2: уже сильно упала за сутки — не шортим
+    if change <= -30:
+        print(f"Пропуск {pair} — уже упала на {change:.2f}%")
+        return
 
     text = build_signal_text(pair, price, prob, vol_m, change)
     buf = create_chart(pair)
@@ -208,7 +230,7 @@ def send_signal(pair: str, price: float, prob: float, vol_m: float, change: floa
 
 
 # ────────────────────────────────────────────────
-#  Обновление списка пар (для фьючерсов)
+#  Обновление списка пар
 # ────────────────────────────────────────────────
 
 def update_pairs_list():
@@ -228,14 +250,12 @@ def update_pairs_list():
 
         PAIRS[:] = sorted_pairs[:1000]
 
-        print(f"Загружено {len(PAIRS)} USDT-M Perpetual Futures пар (отсортировано по объёму)")
+        print(f"Загружено {len(PAIRS)} USDT-M Perpetual Futures пар")
         if len(PAIRS) > 0:
-            print("Первые 5 пар:", PAIRS[:5])
-        else:
-            print("Фьючерсы НЕ найдены! Первые 10 символов markets:", list(markets.keys())[:10])
+            print("Первые 5:", PAIRS[:5])
 
     except Exception as e:
-        print(f"Ошибка обновления списка фьючерсных пар: {e}")
+        print(f"Ошибка обновления списка: {e}")
 
 
 # ────────────────────────────────────────────────
@@ -270,7 +290,7 @@ def main_loop():
                 feats = row[FEATURES].values.reshape(1, -1)
                 prob = model.predict_proba(feats)[0][1]
 
-                print(f"{pair:12}  prob = {prob:.4f}")
+                print(f"{pair:20} prob = {prob:.4f}")
 
                 if prob > PROBABILITY_THRESHOLD:
                     price, ch, vm = get_market_data(pair)
@@ -279,7 +299,7 @@ def main_loop():
             except Exception as e:
                 print(f"Ошибка {pair}: {type(e).__name__}")
 
-            time.sleep(0.35)
+            time.sleep(0.4)
 
         if time.time() - last_retrain > 6 * 3600:
             print("Переобучение модели...")
