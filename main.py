@@ -29,7 +29,7 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.65      # можно снизить до 0.50 для теста
+PROBABILITY_THRESHOLD = 0.65
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change']
 
@@ -44,13 +44,17 @@ MEXC_API_KEY = os.getenv('MEXC_API_KEY')
 MEXC_API_SECRET = os.getenv('MEXC_API_SECRET')
 
 bot = Bot(token=TELEGRAM_TOKEN)
+
 exchange = ccxt.mexc({
     'apiKey': MEXC_API_KEY,
     'secret': MEXC_API_SECRET,
     'enableRateLimit': True,
+    'options': {
+        'defaultType': 'swap',           # ← ИСПРАВЛЕНИЕ: perpetual futures (USDT-M)
+    },
 })
 
-PAIRS = ['BTC/USDT']  # будет перезаписано фьючерсами
+PAIRS = ['BTC/USDT']  # будет перезаписано
 
 
 # ────────────────────────────────────────────────
@@ -95,7 +99,6 @@ def load_or_train_model() -> CatBoostClassifier:
         return model
 
     print("Обучение модели...")
-    # (оставил старое обучение на споте — оно работает)
     all_data = []
     training_pairs = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT',
                       'ADA/USDT', 'DOGE/USDT', 'SHIB/USDT', 'AVAX/USDT', 'TRX/USDT']
@@ -188,7 +191,7 @@ def create_chart(pair: str) -> io.BytesIO | None:
 
 
 def send_signal(pair: str, price: float, prob: float, vol_m: float, change: float):
-    # if vol_m < 50: return                    # ← минимальная капа (раскомментируй если нужно)
+    # if vol_m < 50: return
 
     text = build_signal_text(pair, price, prob, vol_m, change)
     buf = create_chart(pair)
@@ -204,7 +207,7 @@ def send_signal(pair: str, price: float, prob: float, vol_m: float, change: floa
 
 
 # ────────────────────────────────────────────────
-#  Обновление списка пар (только фьючерсы!)
+#  Обновление списка пар
 # ────────────────────────────────────────────────
 
 def update_pairs_list():
@@ -213,25 +216,29 @@ def update_pairs_list():
 
         futures_pairs = []
         for symbol, market in markets.items():
-            if (market.get('swap', False) and          # perpetual
-                market.get('linear', False) and        # USDT-M
+            if (
+                market.get('swap', False) and
+                market.get('linear', False) and
                 symbol.endswith('/USDT') and
-                market.get('active', True)):
+                market.get('active', True)
+            ):
                 futures_pairs.append(symbol)
 
-        # Сортируем по объёму
         sorted_pairs = sorted(
             futures_pairs,
             key=lambda s: float(markets[s].get('info', {}).get('quoteVolume', '0') or 0),
             reverse=True
         )
 
-        PAIRS[:] = sorted_pairs[:1000]   # все реальные фьючерсы (обычно 850-950)
+        PAIRS[:] = sorted_pairs[:1000]
 
         print(f"Загружено {len(PAIRS)} USDT-M Perpetual Futures пар (отсортировано по объёму)")
 
+        if len(PAIRS) == 0:
+            print("ВНИМАНИЕ: фьючерсные пары не найдены!")
+
     except Exception as e:
-        print(f"Ошибка обновления фьючерсных пар: {e}")
+        print(f"Ошибка обновления списка фьючерсных пар: {e}")
 
 
 # ────────────────────────────────────────────────
@@ -242,7 +249,7 @@ def main_loop():
     model = load_or_train_model()
     last_retrain = time.time()
 
-    # Тест при старте
+    # Тест Telegram
     print("Тест Telegram...")
     try:
         bot.send_message(
@@ -276,9 +283,8 @@ def main_loop():
             except Exception as e:
                 print(f"Ошибка {pair}: {type(e).__name__}")
 
-            time.sleep(0.35)          # защита от rate-limit
+            time.sleep(0.35)
 
-        # переобучение раз в 6 часов
         if time.time() - last_retrain > 6 * 3600:
             print("Переобучение модели...")
             model = load_or_train_model()
@@ -289,5 +295,5 @@ def main_loop():
 
 if __name__ == '__main__':
     keep_alive()
-    print("🚀 Бот запущен — сканируем все USDT-M Futures MEXC")
+    print("🚀 Бот запущен — сканируем USDT-M Futures MEXC")
     main_loop()
