@@ -3,6 +3,8 @@ import time
 import ccxt
 import pandas as pd
 import pandas_ta as ta
+import matplotlib
+matplotlib.use('Agg')           # ← правка 1: обязательно перед pyplot
 import matplotlib.pyplot as plt
 from datetime import datetime
 from telegram import Bot
@@ -12,6 +14,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import numpy as np
 import io
+import traceback
 
 # === КЛЮЧИ ===
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -90,7 +93,7 @@ def get_market_info(symbol):
         return 0, 0, 0
 
 def send_signal(pair, price, prob, mcap, change):
-    if mcap < 50: return  # фильтр
+    # if mcap < 50: return          # ← правка 4: закомментировано
     strength = "СИЛЬНЫЙ" if prob > 0.85 else "СРЕДНИЙ" if prob > 0.75 else "СЛАБЫЙ"
     fires = "🔥🔥🔥" if prob > 0.85 else "🔥🔥" if prob > 0.75 else "🔥"
     position_size = round(price * 200 * 50, 0)  # пример
@@ -129,13 +132,23 @@ Trade: Mexc
 
 def trading_loop():
     last_retrain = time.time()
+
+    # ← правка 2: тестовое сообщение при старте
+    print("🚀 Бот запущен на Railway. Проверяем Telegram...")
+    try:
+        bot.send_message(chat_id=CHAT_ID, text="🤖 Бот успешно перезапущен!\nMatplotlib: Agg\nВремя: " + datetime.now().strftime("%H:%M"))
+        print("✅ Тестовое сообщение отправлено в Telegram")
+    except Exception as e:
+        print(f"❌ ОШИБКА TELEGRAM при тесте: {type(e).__name__}: {e}")
+
     while True:
         # Авто-пары
         try:
             markets = exchange.load_markets()
             top_pairs = sorted([p for p in markets if p.endswith('/USDT')], key=lambda p: markets[p].get('quoteVolume', 0), reverse=True)[:150]
             PAIRS[:] = top_pairs
-        except: pass
+        except: 
+            print("Не удалось обновить список пар")
 
         for pair in PAIRS:
             try:
@@ -152,7 +165,9 @@ def trading_loop():
                     price, change, mcap = get_market_info(pair)
                     send_signal(pair, price, prob, mcap, change)
                     print(f"✅ Сигнал {pair} — {int(prob*100)}%")
-            except: pass
+            except Exception as e:                      # ← правка 3: нормальный вывод ошибок
+                print(f"❌ ОШИБКА в {pair}: {type(e).__name__} — {e}")
+                traceback.print_exc()
 
         # Переобучение каждые 6 часов
         if time.time() - last_retrain > 21600:
