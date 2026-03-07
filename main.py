@@ -35,7 +35,7 @@ FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change'
 
 
 # ────────────────────────────────────────────────
-#  Инициализация
+#  Инициализация — отдельный exchange для фьючерсов
 # ────────────────────────────────────────────────
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -45,25 +45,26 @@ MEXC_API_SECRET = os.getenv('MEXC_API_SECRET')
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-exchange = ccxt.mexc({
+# Exchange для фьючерсов (swap = perpetual USDT-M)
+futures_exchange = ccxt.mexc({
     'apiKey': MEXC_API_KEY,
     'secret': MEXC_API_SECRET,
     'enableRateLimit': True,
     'options': {
-        'defaultType': 'swap',           # perpetual futures (USDT-M)
+        'defaultType': 'swap',  # perpetual futures
     },
 })
 
-PAIRS = ['BTC/USDT']  # будет перезаписано
+PAIRS = []  # будет заполнено фьючерсами
 
 
 # ────────────────────────────────────────────────
-#  Данные и фичи
+#  Данные и фичи (используем futures_exchange)
 # ────────────────────────────────────────────────
 
 def fetch_ohlcv(symbol: str, limit: int = 800) -> pd.DataFrame:
     try:
-        bars = exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=limit)
+        bars = futures_exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=limit)
         df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df
@@ -88,7 +89,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ────────────────────────────────────────────────
-#  Модель
+#  Модель (обучение на споте, но предсказание на фьючерсах — ок для теста)
 # ────────────────────────────────────────────────
 
 def load_or_train_model() -> CatBoostClassifier:
@@ -126,12 +127,12 @@ def load_or_train_model() -> CatBoostClassifier:
 
 
 # ────────────────────────────────────────────────
-#  Рыночные данные
+#  Рыночные данные (тоже на фьючерсах)
 # ────────────────────────────────────────────────
 
 def get_market_data(symbol: str):
     try:
-        ticker = exchange.fetch_ticker(symbol)
+        ticker = futures_exchange.fetch_ticker(symbol)
         price = ticker['last']
         change = ticker.get('percentage', 0)
         vol = ticker.get('quoteVolume', 0)
@@ -143,11 +144,11 @@ def get_market_data(symbol: str):
 
 
 # ────────────────────────────────────────────────
-#  Сигнал
+#  Сигнал (без изменений)
 # ────────────────────────────────────────────────
 
 def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change: float) -> str:
-    coin = pair.split('/')[0]
+    coin = pair.replace('USDT', '')  # для фьючерсов без /
     strength = "СИЛЬНЫЙ" if prob > 0.85 else "СРЕДНИЙ" if prob > 0.75 else "СЛАБЫЙ"
     fires    = "🔥🔥🔥" if prob > 0.85 else "🔥🔥" if prob > 0.75 else "🔥"
     pos_size = round(price * 200 * 50, 0)
@@ -207,21 +208,16 @@ def send_signal(pair: str, price: float, prob: float, vol_m: float, change: floa
 
 
 # ────────────────────────────────────────────────
-#  Обновление списка пар
+#  Обновление списка пар (для фьючерсов)
 # ────────────────────────────────────────────────
 
 def update_pairs_list():
     try:
-        markets = exchange.load_markets()
+        markets = futures_exchange.load_markets(reload=True)
 
         futures_pairs = []
         for symbol, market in markets.items():
-            if (
-                market.get('swap', False) and
-                market.get('linear', False) and
-                symbol.endswith('/USDT') and
-                market.get('active', True)
-            ):
+            if market.get('swap', False) and market.get('linear', False) and 'USDT' in symbol and market.get('active', True):
                 futures_pairs.append(symbol)
 
         sorted_pairs = sorted(
@@ -233,10 +229,10 @@ def update_pairs_list():
         PAIRS[:] = sorted_pairs[:1000]
 
         print(f"Загружено {len(PAIRS)} USDT-M Perpetual Futures пар (отсортировано по объёму)")
-
-        if len(PAIRS) == 0:
-            print("ВНИМАНИЕ: фьючерсные пары не найдены!")
-            print("Первые 10 символов из markets:", list(markets.keys())[:10])
+        if len(PAIRS) > 0:
+            print("Первые 5 пар:", PAIRS[:5])
+        else:
+            print("Фьючерсы НЕ найдены! Первые 10 символов markets:", list(markets.keys())[:10])
 
     except Exception as e:
         print(f"Ошибка обновления списка фьючерсных пар: {e}")
@@ -250,7 +246,6 @@ def main_loop():
     model = load_or_train_model()
     last_retrain = time.time()
 
-    # Тест Telegram
     print("Тест Telegram...")
     try:
         bot.send_message(
