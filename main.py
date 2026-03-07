@@ -8,7 +8,7 @@ import ccxt
 import pandas as pd
 import pandas_ta as ta
 import matplotlib
-matplotlib.use('Agg')  # обязательно для сервера
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from telegram import Bot
@@ -17,7 +17,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import numpy as np
 
-# предполагается, что у тебя есть keep_alive.py
 from keep_alive import keep_alive
 
 
@@ -26,16 +25,11 @@ from keep_alive import keep_alive
 # ────────────────────────────────────────────────
 
 TIMEFRAME = '1h'
-INTERVAL_SECONDS = 900          # 15 минут
+INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.65
-
-TRAINING_PAIRS = [
-    'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT',
-    'ADA/USDT', 'DOGE/USDT', 'SHIB/USDT', 'AVAX/USDT', 'TRX/USDT'
-]
+PROBABILITY_THRESHOLD = 0.65      # можно снизить до 0.50 для теста
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change']
 
@@ -45,7 +39,7 @@ FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change'
 # ────────────────────────────────────────────────
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-CHAT_ID = os.getenv('CHAT_ID')          # должно быть строкой, например "-1001234567890"
+CHAT_ID = os.getenv('CHAT_ID')
 MEXC_API_KEY = os.getenv('MEXC_API_KEY')
 MEXC_API_SECRET = os.getenv('MEXC_API_SECRET')
 
@@ -56,7 +50,7 @@ exchange = ccxt.mexc({
     'enableRateLimit': True,
 })
 
-PAIRS = ['ENA/USDT']  # будет перезаписано
+PAIRS = ['BTC/USDT']  # будет перезаписано фьючерсами
 
 
 # ────────────────────────────────────────────────
@@ -93,51 +87,39 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 #  Модель
 # ────────────────────────────────────────────────
 
-def train_and_save_model():
-    print("Обучение модели...")
-    all_data = []
-
-    for symbol in TRAINING_PAIRS:
-        df = fetch_ohlcv(symbol)
-        df = add_features(df)
-        if df.empty:
-            continue
-
-        df['target'] = (
-            (df['close'].shift(-1) < df['ema200'].shift(-1)) &
-            (df['price_change'].shift(-1) < -0.01)
-        ).astype(int)
-
-        all_data.append(df)
-
-    if not all_data:
-        print("Нет данных для обучения!")
-        return None, 0.0
-
-    df_all = pd.concat(all_data).dropna()
-    X = df_all[FEATURES]
-    y = df_all['target']
-
-    X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    model = CatBoostClassifier(iterations=500, depth=6, learning_rate=0.05, verbose=0)
-    model.fit(X_tr, y_tr)
-
-    acc = accuracy_score(y_te, model.predict(X_te))
-    print(f"Модель готова | Accuracy: {acc:.4f}")
-
-    model.save_model(MODEL_FILE)
-    return model, acc
-
-
-def load_or_train_model():
+def load_or_train_model() -> CatBoostClassifier:
     if os.path.exists(MODEL_FILE):
         print("Загружаем модель...")
         model = CatBoostClassifier()
         model.load_model(MODEL_FILE)
         return model
 
-    return train_and_save_model()[0]
+    print("Обучение модели...")
+    # (оставил старое обучение на споте — оно работает)
+    all_data = []
+    training_pairs = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT',
+                      'ADA/USDT', 'DOGE/USDT', 'SHIB/USDT', 'AVAX/USDT', 'TRX/USDT']
+    for symbol in training_pairs:
+        df = fetch_ohlcv(symbol)
+        df = add_features(df)
+        if df.empty: continue
+        df['target'] = (
+            (df['close'].shift(-1) < df['ema200'].shift(-1)) &
+            (df['price_change'].shift(-1) < -0.01)
+        ).astype(int)
+        all_data.append(df)
+
+    df_all = pd.concat(all_data).dropna()
+    X = df_all[FEATURES]
+    y = df_all['target']
+
+    X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = CatBoostClassifier(iterations=500, depth=6, learning_rate=0.05, verbose=0)
+    model.fit(X_tr, y_tr)
+    acc = accuracy_score(y_te, model.predict(X_te))
+    print(f"Модель обучена | Accuracy: {acc:.4f}")
+    model.save_model(MODEL_FILE)
+    return model
 
 
 # ────────────────────────────────────────────────
@@ -165,13 +147,12 @@ def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change
     coin = pair.split('/')[0]
     strength = "СИЛЬНЫЙ" if prob > 0.85 else "СРЕДНИЙ" if prob > 0.75 else "СЛАБЫЙ"
     fires    = "🔥🔥🔥" if prob > 0.85 else "🔥🔥" if prob > 0.75 else "🔥"
-
     pos_size = round(price * 200 * 50, 0)
 
     return f"""🔴 {coin} {fires} {strength}
 x200 / {pos_size}$ / {vol_m}M / {change:+.4f}
 
-Trade: Mexc
+Trade: Mexc Futures
 
 Направление: Разворот ВНИЗ
 Действие: SHORT
@@ -187,17 +168,14 @@ Trade: Mexc
 
 def create_chart(pair: str) -> io.BytesIO | None:
     df = fetch_ohlcv(pair)
-    if df.empty:
-        return None
+    if df.empty: return None
     df = add_features(df)
-    if df.empty:
-        return None
+    if df.empty: return None
 
     fig, ax = plt.subplots(figsize=(10, 5), facecolor='#1e1e1e')
     ax.plot(df['timestamp'], df['close'], color='white', lw=1.2)
     ax.plot(df['timestamp'], df['ema200'], color='orange', lw=1.5)
     ax.bar(df['timestamp'], df['volume'], color='gray', alpha=0.4)
-
     ax.set_title(f'{pair} — Разворот ВНИЗ', color='white')
     ax.grid(True, alpha=0.25, color='gray')
     ax.tick_params(colors='white')
@@ -210,11 +188,10 @@ def create_chart(pair: str) -> io.BytesIO | None:
 
 
 def send_signal(pair: str, price: float, prob: float, vol_m: float, change: float):
-    # if vol_m < 50: return   # закомментировано
+    # if vol_m < 50: return                    # ← минимальная капа (раскомментируй если нужно)
 
     text = build_signal_text(pair, price, prob, vol_m, change)
     buf = create_chart(pair)
-
     if buf is None:
         print(f"График не создан: {pair}")
         return
@@ -224,30 +201,45 @@ def send_signal(pair: str, price: float, prob: float, vol_m: float, change: floa
         print(f"Сигнал отправлен → {pair}  ({int(prob*100)}%)")
     except Exception as e:
         print(f"Ошибка отправки {pair}: {e}")
-        traceback.print_exc()
 
 
 # ────────────────────────────────────────────────
-#  Цикл
+#  Обновление списка пар (только фьючерсы!)
 # ────────────────────────────────────────────────
 
 def update_pairs_list():
     try:
         markets = exchange.load_markets()
-        usdt = [p for p in markets if p.endswith('/USDT')]
-        sorted_usdt = sorted(usdt, key=lambda p: markets[p].get('info', {}).get('quoteVolume', '0'), reverse=True)[:150]
-        PAIRS[:] = sorted_usdt
-        print(f"Обновлено пар: {len(PAIRS)}")
-    except Exception as e:
-        print(f"Не удалось обновить пары: {e}")
 
+        futures_pairs = []
+        for symbol, market in markets.items():
+            if (market.get('swap', False) and          # perpetual
+                market.get('linear', False) and        # USDT-M
+                symbol.endswith('/USDT') and
+                market.get('active', True)):
+                futures_pairs.append(symbol)
+
+        # Сортируем по объёму
+        sorted_pairs = sorted(
+            futures_pairs,
+            key=lambda s: float(markets[s].get('info', {}).get('quoteVolume', '0') or 0),
+            reverse=True
+        )
+
+        PAIRS[:] = sorted_pairs[:1000]   # все реальные фьючерсы (обычно 850-950)
+
+        print(f"Загружено {len(PAIRS)} USDT-M Perpetual Futures пар (отсортировано по объёму)")
+
+    except Exception as e:
+        print(f"Ошибка обновления фьючерсных пар: {e}")
+
+
+# ────────────────────────────────────────────────
+#  Основной цикл
+# ────────────────────────────────────────────────
 
 def main_loop():
     model = load_or_train_model()
-    if model is None:
-        print("Модель не загружена → выход")
-        return
-
     last_retrain = time.time()
 
     # Тест при старте
@@ -255,12 +247,11 @@ def main_loop():
     try:
         bot.send_message(
             chat_id=CHAT_ID,
-            text=f"🤖 Бот запущен | {datetime.now().strftime('%Y-%m-%d %H:%M')}\nВерсия ptb: 13.15"
+            text=f"🤖 Бот запущен (Futures) | {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         )
         print("Тестовое сообщение отправлено!")
     except Exception as e:
-        print(f"Telegram ошибка при тесте: {e}")
-        traceback.print_exc()
+        print(f"Telegram ошибка: {e}")
 
     while True:
         update_pairs_list()
@@ -283,8 +274,9 @@ def main_loop():
                     send_signal(pair, price, prob, vm, ch)
 
             except Exception as e:
-                print(f"Ошибка {pair}: {type(e).__name__}  {e}")
-                traceback.print_exc()
+                print(f"Ошибка {pair}: {type(e).__name__}")
+
+            time.sleep(0.35)          # защита от rate-limit
 
         # переобучение раз в 6 часов
         if time.time() - last_retrain > 6 * 3600:
@@ -297,5 +289,5 @@ def main_loop():
 
 if __name__ == '__main__':
     keep_alive()
-    print("🚀 Bot старт")
+    print("🚀 Бот запущен — сканируем все USDT-M Futures MEXC")
     main_loop()
