@@ -30,7 +30,8 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.25
+PROBABILITY_THRESHOLD = 0.6
+HOT_PUMP_THRESHOLD = 5   # +5.5% за последний час — считаем "горячей"
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change']
 
@@ -76,7 +77,6 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     df['ema200']       = ta.ema(df['close'], length=200)
-    df['ema21']        = ta.ema(df['close'], length=21)   # для усреднения
     df['rsi']          = ta.rsi(df['close'], length=14)
     df['macd']         = ta.macd(df['close'])['MACD_12_26_9']
     bb                 = ta.bbands(df['close'], length=20, std=2.0)
@@ -93,10 +93,10 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def load_or_train_model() -> CatBoostClassifier:
     if os.path.exists(MODEL_FILE):
-        print("Удаляем старую модель для переобучения...")
+        print("Удаляем старую модель...")
         os.remove(MODEL_FILE)
 
-    print("Обучение модели на фьючерсах + сегодняшних памп-альтах...")
+    print("Обучение модели на фьючерсах...")
     training_pairs = [
         'BTC/USDT:USDT','ETH/USDT:USDT','SOL/USDT:USDT','XRP/USDT:USDT',
         'BNB/USDT:USDT','ADA/USDT:USDT','DOGE/USDT:USDT','AVAX/USDT:USDT',
@@ -126,13 +126,37 @@ def load_or_train_model() -> CatBoostClassifier:
     model = CatBoostClassifier(iterations=500, depth=6, learning_rate=0.05, verbose=0)
     model.fit(X_tr, y_tr)
     acc = accuracy_score(y_te, model.predict(X_te))
-    print(f"Модель обучена на фьючерсах | Accuracy: {acc:.4f}")
+    print(f"Модель обучена | Accuracy: {acc:.4f}")
     model.save_model(MODEL_FILE)
     return model
 
 
 # ────────────────────────────────────────────────
-#  Рыночные данные
+#  Быстрый пре-скан горячих монет (+5.5%)
+# ────────────────────────────────────────────────
+
+def get_hot_pairs():
+    hot = []
+    try:
+        markets = futures_exchange.load_markets()
+        for symbol in PAIRS:
+            try:
+                ticker = futures_exchange.fetch_ticker(symbol)
+                change = ticker.get('percentage', 0)
+                if change >= HOT_PUMP_THRESHOLD:
+                    hot.append((symbol, change))
+            except:
+                continue
+        # Сортируем по силе пампа (самые сильные первыми)
+        hot.sort(key=lambda x: x[1], reverse=True)
+        return [p[0] for p in hot]
+    except Exception as e:
+        print(f"Ошибка пре-скана горячих монет: {e}")
+        return []
+
+
+# ────────────────────────────────────────────────
+#  Остальные функции (get_market_data, create_chart, send_signal и т.д.)
 # ────────────────────────────────────────────────
 
 def get_market_data(symbol: str):
@@ -148,11 +172,7 @@ def get_market_data(symbol: str):
         return 0.0, 0.0, 0.0
 
 
-# ────────────────────────────────────────────────
-#  График с линиями усреднения
-# ────────────────────────────────────────────────
-
-def create_chart(pair: str, entry_price: float, ema21: float) -> io.BytesIO | None:
+def create_chart(pair: str, entry_price: float) -> io.BytesIO | None:
     df = fetch_ohlcv(pair)
     if df.empty: return None
     df = add_features(df)
@@ -160,17 +180,17 @@ def create_chart(pair: str, entry_price: float, ema21: float) -> io.BytesIO | No
 
     tp1 = round(entry_price * 0.95, 6)
     tp2 = round(entry_price * 0.90, 6)
+    avg_level = round(entry_price * 1.06, 6)
 
     fig, ax = plt.subplots(figsize=(10, 6), facecolor='#0d1117')
-
     ax.plot(df['timestamp'], df['close'], color='#00ff9d', linewidth=2, label='Цена')
     ax.plot(df['timestamp'], df['ema200'], color='#ff4444', linewidth=1.8, label='EMA200')
 
-    # Линии
     ax.axhline(entry_price, color='white', linestyle='--', linewidth=1.3, label='Вход')
     ax.axhline(tp1, color='#00ff00', linestyle='-', linewidth=1.1, label='Цель 1')
     ax.axhline(tp2, color='#00cc00', linestyle='-', linewidth=1.1, label='Цель 2')
-    ax.axhline(ema21, color='orange', linestyle='--', linewidth=1.3, label='Усреднение (EMA21)')
+    if avg_level > entry_price:
+        ax.axhline(avg_level, color='orange', linestyle='--', linewidth=1.3, label='Усреднение +6%')
 
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b %H:%M'))
     plt.xticks(rotation=45)
@@ -186,17 +206,13 @@ def create_chart(pair: str, entry_price: float, ema21: float) -> io.BytesIO | No
     return buf
 
 
-# ────────────────────────────────────────────────
-#  Сигнал
-# ────────────────────────────────────────────────
-
-def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change: float, ema21: float) -> str:
+def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change: float) -> str:
     coin = pair.split('/')[0].replace(':USDT', '')
     strength = "СИЛЬНЫЙ" if prob > 0.85 else "СРЕДНИЙ" if prob > 0.75 else "СЛАБЫЙ"
     fires = "🔥🔥🔥" if prob > 0.85 else "🔥🔥" if prob > 0.75 else "🔥"
     pos_size = round(price * 200 * 50, 0)
 
-    return f"""🔴 {coin} {fires} {strength}
+    text = f"""🔴 {coin} {fires} {strength}
 x200 / {pos_size}$ / {vol_m}M / {change:+.4f}
 
 Trade: Mexc Futures
@@ -206,33 +222,33 @@ Trade: Mexc Futures
 
 Текущая цена: {price}
 Цель 1: {round(price * 0.95, 6)}
-Цель 2: {round(price * 0.90, 6)}
-Усреднение: на EMA21 ≈ {round(ema21, 6)}
+Цель 2: {round(price * 0.90, 6)}"""
+
+    avg_level = round(price * 1.06, 6)
+    if avg_level > price:
+        text += f"\nУсреднение: на +6% ≈ {avg_level}"
+
+    text += f"""
 
 Уверенность: {int(prob * 100)}%
 Сила сигнала: {int(prob * 100 - 20)}/100
 Общий Score: {int(prob * 100 + int(prob * 100 - 20))}"""
+    return text
 
 
 def send_signal(pair: str, price: float, prob: float, vol_m: float, change: float):
-    df = fetch_ohlcv(pair)
-    if df.empty: return
-    df = add_features(df)
-    if df.empty: return
-    ema21 = df['ema21'].iloc[-1]
-
-    text = build_signal_text(pair, price, prob, vol_m, change, ema21)
-    buf = create_chart(pair, price, ema21)
+    text = build_signal_text(pair, price, prob, vol_m, change)
+    buf = create_chart(pair, price)
 
     try:
         bot.send_photo(chat_id=CHAT_ID, photo=buf, caption=text)
-        print(f"Сигнал отправлен → {pair} ({int(prob*100)}%) | Усреднение на EMA21 ≈ {round(ema21, 6)}")
+        print(f"Сигнал отправлен → {pair} ({int(prob*100)}%)")
     except Exception as e:
         print(f"Ошибка отправки {pair}: {e}")
 
 
 # ────────────────────────────────────────────────
-#  Обновление списка пар и цикл
+#  Обновление списка пар
 # ────────────────────────────────────────────────
 
 def update_pairs_list():
@@ -246,6 +262,10 @@ def update_pairs_list():
         print(f"Ошибка обновления списка: {e}")
 
 
+# ────────────────────────────────────────────────
+#  Основной цикл с приоритетом горячих монет
+# ────────────────────────────────────────────────
+
 def main_loop():
     model = load_or_train_model()
     last_retrain = time.time()
@@ -256,7 +276,45 @@ def main_loop():
     while True:
         update_pairs_list()
 
+        # === ПРИОРИТЕТНЫЙ СКАН ГОРЯЧИХ МОНЕТ ===
+        hot_pairs = []
+        try:
+            for symbol in PAIRS:
+                try:
+                    ticker = futures_exchange.fetch_ticker(symbol)
+                    if ticker.get('percentage', 0) >= HOT_PUMP_THRESHOLD:
+                        hot_pairs.append((symbol, ticker.get('percentage', 0)))
+                except:
+                    continue
+            hot_pairs.sort(key=lambda x: x[1], reverse=True)  # самые сильные пампы первыми
+            hot_pairs = [p[0] for p in hot_pairs]
+            print(f"Найдено {len(hot_pairs)} горячих монет (+{HOT_PUMP_THRESHOLD}%+)")
+        except:
+            pass
+
+        # Сначала проверяем горячие монеты
+        for pair in hot_pairs:
+            try:
+                df = fetch_ohlcv(pair)
+                df = add_features(df)
+                if len(df) < MIN_DATA_LENGTH: continue
+
+                row = df.iloc[-1]
+                feats = row[FEATURES].values.reshape(1, -1)
+                prob = model.predict_proba(feats)[0][1]
+
+                print(f"[ГОРЯЧАЯ] {pair:20} prob = {prob:.4f}")
+
+                if prob > PROBABILITY_THRESHOLD:
+                    price, ch, vm = get_market_data(pair)
+                    send_signal(pair, price, prob, vm, ch)
+            except Exception as e:
+                print(f"Ошибка {pair}: {type(e).__name__}")
+            time.sleep(0.3)
+
+        # Потом обычные пары
         for pair in PAIRS:
+            if pair in hot_pairs: continue  # уже проверили
             try:
                 df = fetch_ohlcv(pair)
                 df = add_features(df)
@@ -271,10 +329,8 @@ def main_loop():
                 if prob > PROBABILITY_THRESHOLD:
                     price, ch, vm = get_market_data(pair)
                     send_signal(pair, price, prob, vm, ch)
-
             except Exception as e:
                 print(f"Ошибка {pair}: {type(e).__name__}")
-
             time.sleep(0.4)
 
         if time.time() - last_retrain > 6 * 3600:
