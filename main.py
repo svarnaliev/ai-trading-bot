@@ -30,7 +30,7 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.25   # снижено для теста — можно вернуть 0.65 позже
+PROBABILITY_THRESHOLD = 0.25
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change']
 
@@ -89,7 +89,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ────────────────────────────────────────────────
-#  Модель
+#  Модель (переобучена на фьючерсах)
 # ────────────────────────────────────────────────
 
 def load_or_train_model() -> CatBoostClassifier:
@@ -99,10 +99,13 @@ def load_or_train_model() -> CatBoostClassifier:
         model.load_model(MODEL_FILE)
         return model
 
-    print("Обучение модели...")
+    print("Обучение модели на фьючерсных данных...")
     all_data = []
-    training_pairs = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
-                      'ADA/USDT:USDT', 'DOGE/USDT:USDT']
+    training_pairs = [
+        'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
+        'BNB/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT', 'AVAX/USDT:USDT',
+        'TRX/USDT:USDT', 'TON/USDT:USDT', 'NEAR/USDT:USDT', 'SUI/USDT:USDT'
+    ]
     for symbol in training_pairs:
         df = fetch_ohlcv(symbol)
         df = add_features(df)
@@ -121,7 +124,7 @@ def load_or_train_model() -> CatBoostClassifier:
     model = CatBoostClassifier(iterations=500, depth=6, learning_rate=0.05, verbose=0)
     model.fit(X_tr, y_tr)
     acc = accuracy_score(y_te, model.predict(X_te))
-    print(f"Модель обучена | Accuracy: {acc:.4f}")
+    print(f"Модель обучена на фьючерсах | Accuracy: {acc:.4f}")
     model.save_model(MODEL_FILE)
     return model
 
@@ -153,7 +156,7 @@ def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change
     fires    = "🔥🔥🔥" if prob > 0.85 else "🔥🔥" if prob > 0.75 else "🔥"
     pos_size = round(price * 200 * 50, 0)
 
-    text = f"""🔴 {coin} {fires} {strength}
+    return f"""🔴 {coin} {fires} {strength}
 x200 / {pos_size}$ / {vol_m}M / {change:+.4f}
 
 Trade: Mexc Futures
@@ -168,7 +171,6 @@ Trade: Mexc Futures
 Уверенность: {int(prob * 100)}%
 Сила сигнала: {int(prob * 100 - 20)}/100
 Общий Score: {int(prob * 100 + int(prob * 100 - 20))}"""
-    return text
 
 
 def create_chart(pair: str) -> io.BytesIO | None:
@@ -179,15 +181,12 @@ def create_chart(pair: str) -> io.BytesIO | None:
 
     fig, ax = plt.subplots(figsize=(10, 6), facecolor='#0d1117')
 
-    # Цена и EMA на основной оси
     ax.plot(df['timestamp'], df['close'], color='#00ff9d', linewidth=2, label='Цена')
     ax.plot(df['timestamp'], df['ema200'], color='#ff4444', linewidth=1.8, label='EMA200')
 
-    # Объём внизу
     ax_vol = ax.twinx()
     ax_vol.bar(df['timestamp'], df['volume'], color='gray', alpha=0.35, width=0.0008)
 
-    # Форматирование оси времени
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b %H:%M'))
     plt.xticks(rotation=45)
     ax.grid(True, alpha=0.15, color='gray')
@@ -206,12 +205,10 @@ def create_chart(pair: str) -> io.BytesIO | None:
 
 
 def send_signal(pair: str, price: float, prob: float, vol_m: float, change: float):
-    # Фильтр 1: объём слишком маленький — пропускаем
     if vol_m < 1:
         print(f"Пропуск {pair} — объём {vol_m}M < 1M")
         return
 
-    # Фильтр 2: уже сильно упала за сутки — не шортим
     if change <= -30:
         print(f"Пропуск {pair} — уже упала на {change:.2f}%")
         return
