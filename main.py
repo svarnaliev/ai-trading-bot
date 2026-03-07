@@ -50,7 +50,7 @@ exchange = ccxt.mexc({
     'secret': MEXC_API_SECRET,
     'enableRateLimit': True,
     'options': {
-        'defaultType': 'swap',           # ← ИСПРАВЛЕНИЕ: perpetual futures (USDT-M)
+        'defaultType': 'swap',           # perpetual futures (USDT-M)
     },
 })
 
@@ -236,6 +236,7 @@ def update_pairs_list():
 
         if len(PAIRS) == 0:
             print("ВНИМАНИЕ: фьючерсные пары не найдены!")
+            print("Первые 10 символов из markets:", list(markets.keys())[:10])
 
     except Exception as e:
         print(f"Ошибка обновления списка фьючерсных пар: {e}")
