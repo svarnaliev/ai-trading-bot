@@ -30,7 +30,7 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.40
+PROBABILITY_THRESHOLD = 0.50   # ← подняли для уверенности
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change', 'bb_width']
 
@@ -89,7 +89,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ────────────────────────────────────────────────
-#  Модель (новый актуальный список 40 пар)
+#  Модель
 # ────────────────────────────────────────────────
 
 def load_or_train_model() -> CatBoostClassifier:
@@ -97,7 +97,7 @@ def load_or_train_model() -> CatBoostClassifier:
         print("Удаляем старую модель...")
         os.remove(MODEL_FILE)
 
-    print("Обучение модели на актуальных 40 парах...")
+    print("Обучение модели...")
     training_pairs = [
         'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
         'BNB/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT', 'AVAX/USDT:USDT',
@@ -115,13 +115,9 @@ def load_or_train_model() -> CatBoostClassifier:
     for symbol in training_pairs:
         try:
             df = fetch_ohlcv(symbol)
-            if df.empty:
-                print(f"Пропуск {symbol} — данные пустые")
-                continue
+            if df.empty: continue
             df = add_features(df)
-            if df.empty:
-                print(f"Пропуск {symbol} — после фич пусто")
-                continue
+            if df.empty: continue
             df['target'] = (df['price_change'].shift(-1) < -0.005).astype(int)
             all_data.append(df)
             loaded_count += 1
@@ -130,9 +126,6 @@ def load_or_train_model() -> CatBoostClassifier:
             continue
 
     print(f"Успешно загружено {loaded_count} пар для обучения")
-    if not all_data:
-        raise ValueError("Нет данных для обучения модели!")
-
     df_all = pd.concat(all_data).dropna()
     X = df_all[FEATURES]
     y = df_all['target']
@@ -147,7 +140,7 @@ def load_or_train_model() -> CatBoostClassifier:
 
 
 # ────────────────────────────────────────────────
-#  Остальные функции (точно как в предыдущем коде)
+#  Остальные функции (с фильтрами для точности)
 # ────────────────────────────────────────────────
 
 def get_market_data(symbol: str):
@@ -235,11 +228,12 @@ def send_signal(pair: str, price: float, prob: float, vol_m: float, change: floa
     df = add_features(df)
     if df.empty: return
 
-    if df['rsi'].iloc[-1] < 70:
-        print(f"Пропуск {pair} — RSI {df['rsi'].iloc[-1]:.1f} < 70")
+    # Строгие фильтры для уменьшения ложняков
+    if df['rsi'].iloc[-1] < 72:
+        print(f"Пропуск {pair} — RSI {df['rsi'].iloc[-1]:.1f} < 72")
         return
-    if df['bb_width'].iloc[-1] < 0.05:
-        print(f"Пропуск {pair} — BB width {df['bb_width'].iloc[-1]:.4f} < 0.05")
+    if df['bb_width'].iloc[-1] < 0.06:
+        print(f"Пропуск {pair} — BB width {df['bb_width'].iloc[-1]:.4f} < 0.06")
         return
 
     text = build_signal_text(pair, price, prob, vol_m, change)
