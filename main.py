@@ -1,7 +1,7 @@
 import os
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 import io
 
 import ccxt
@@ -30,7 +30,8 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.50   # ← подняли для уверенности
+PROBABILITY_THRESHOLD = 0.55   # подняли для уверенности
+SIGNAL_LIFETIME = 10800        # 3 часа
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change', 'bb_width']
 
@@ -54,6 +55,7 @@ futures_exchange = ccxt.mexc({
 })
 
 PAIRS = []
+ACTIVE_SIGNALS = []  # [{'pair': str, 'entry_price': float, 'avg_price': float or None, 'timestamp': float}]
 
 
 # ────────────────────────────────────────────────
@@ -140,7 +142,7 @@ def load_or_train_model() -> CatBoostClassifier:
 
 
 # ────────────────────────────────────────────────
-#  Остальные функции (с фильтрами для точности)
+#  Рыночные данные
 # ────────────────────────────────────────────────
 
 def get_market_data(symbol: str):
@@ -155,6 +157,10 @@ def get_market_data(symbol: str):
         print(f"Ошибка тикера {symbol}: {e}")
         return 0.0, 0.0, 0.0
 
+
+# ────────────────────────────────────────────────
+#  График
+# ────────────────────────────────────────────────
 
 def create_chart(pair: str, entry_price: float) -> io.BytesIO | None:
     df = fetch_ohlcv(pair)
@@ -192,6 +198,10 @@ def create_chart(pair: str, entry_price: float) -> io.BytesIO | None:
     return buf
 
 
+# ────────────────────────────────────────────────
+#  Сигнал + сохранение для отслеживания
+# ────────────────────────────────────────────────
+
 def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change: float) -> str:
     coin = pair.split('/')[0].replace(':USDT', '')
     strength = "СИЛЬНЫЙ" if prob > 0.85 else "СРЕДНИЙ" if prob > 0.75 else "СЛАБЫЙ"
@@ -228,12 +238,17 @@ def send_signal(pair: str, price: float, prob: float, vol_m: float, change: floa
     df = add_features(df)
     if df.empty: return
 
-    # Строгие фильтры для уменьшения ложняков
+    # Строгие фильтры
     if df['rsi'].iloc[-1] < 72:
         print(f"Пропуск {pair} — RSI {df['rsi'].iloc[-1]:.1f} < 72")
         return
     if df['bb_width'].iloc[-1] < 0.06:
         print(f"Пропуск {pair} — BB width {df['bb_width'].iloc[-1]:.4f} < 0.06")
+        return
+
+    # Фильтр по объёму на пампе
+    if change > 5 and df['volume_change'].iloc[-1] > -0.1:
+        print(f"Пропуск {pair} — памп на растущем объёме")
         return
 
     text = build_signal_text(pair, price, prob, vol_m, change)
@@ -242,8 +257,49 @@ def send_signal(pair: str, price: float, prob: float, vol_m: float, change: floa
     try:
         bot.send_photo(chat_id=CHAT_ID, photo=buf, caption=text)
         print(f"Сигнал отправлен → {pair} ({int(prob*100)}%)")
+
+        avg_level = round(price * 1.06, 6) if round(price * 1.06, 6) > price else None
+        ACTIVE_SIGNALS.append({
+            'pair': pair,
+            'entry_price': price,
+            'avg_price': avg_level,
+            'timestamp': time.time()
+        })
     except Exception as e:
         print(f"Ошибка отправки {pair}: {e}")
+
+
+# ────────────────────────────────────────────────
+#  Проверка истёкших сигналов (3 часа)
+# ────────────────────────────────────────────────
+
+def check_expired_signals():
+    global ACTIVE_SIGNALS
+    current_time = time.time()
+    to_remove = []
+
+    for signal in ACTIVE_SIGNALS:
+        if current_time - signal['timestamp'] > SIGNAL_LIFETIME:
+            pair = signal['pair']
+            try:
+                price, _, _ = get_market_data(pair)
+                entry = signal['entry_price']
+                avg = signal['avg_price']
+
+                if price < entry:
+                    msg = f"✅ Сигнал {pair} отработал! Цена ниже входа ({price:.6f} < {entry:.6f}) — профит."
+                else:
+                    close_level = avg if avg else entry
+                    msg = f"⚠️ Сигнал {pair} не сработал за 3 часа. Закрывай на {close_level:.6f} (не в минус). Текущая цена: {price:.6f}"
+
+                bot.send_message(chat_id=CHAT_ID, text=msg)
+                print(msg)
+            except Exception as e:
+                print(f"Ошибка проверки {pair}: {e}")
+
+            to_remove.append(signal)
+
+    ACTIVE_SIGNALS = [s for s in ACTIVE_SIGNALS if s not in to_remove]
 
 
 # ────────────────────────────────────────────────
@@ -270,6 +326,7 @@ def main_loop():
 
     while True:
         update_pairs_list()
+        check_expired_signals()  # проверяем старые сигналы
 
         for pair in PAIRS:
             try:
