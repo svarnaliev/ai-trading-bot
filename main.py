@@ -30,7 +30,7 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.4
+PROBABILITY_THRESHOLD = 0.40   # твой текущий порог
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change', 'bb_width']
 
@@ -89,7 +89,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ────────────────────────────────────────────────
-#  Модель (улучшена, с пропуском несуществующих пар)
+#  Модель
 # ────────────────────────────────────────────────
 
 def load_or_train_model() -> CatBoostClassifier:
@@ -97,40 +97,25 @@ def load_or_train_model() -> CatBoostClassifier:
         print("Удаляем старую модель...")
         os.remove(MODEL_FILE)
 
-    print("Обучение модели на реальных фьючерсах...")
+    print("Обучение модели...")
     training_pairs = [
-        'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
-        'BNB/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT', 'AVAX/USDT:USDT',
-        'TRX/USDT:USDT', 'TON/USDT:USDT', 'NEAR/USDT:USDT', 'SUI/USDT:USDT',
-        'PEPE/USDT:USDT', 'WIF/USDT:USDT', 'BONK/USDT:USDT', 'POPCAT/USDT:USDT',
-        'POWER/USDT:USDT', 'AERO/USDT:USDT', 'JUP/USDT:USDT', 'PUMP/USDT:USDT',
-        'MOODENG/USDT:USDT', 'GOAT/USDT:USDT', 'FARTCOIN/USDT:USDT', 'KITE/USDT:USDT',
-        'MICHI/USDT:USDT', 'BRETT/USDT:USDT', 'PNUT/USDT:USDT', 'GME/USDT:USDT'
+        'BTC/USDT:USDT','ETH/USDT:USDT','SOL/USDT:USDT','XRP/USDT:USDT',
+        'BNB/USDT:USDT','ADA/USDT:USDT','DOGE/USDT:USDT','AVAX/USDT:USDT',
+        'TRX/USDT:USDT','TON/USDT:USDT','NEAR/USDT:USDT','SUI/USDT:USDT',
+        'PEPE/USDT:USDT','WIF/USDT:USDT','BONK/USDT:USDT','POPCAT/USDT:USDT',
+        'POWER/USDT:USDT','SPX6900/USDT:USDT','BANANAS31/USDT:USDT','PIPPIN/USDT:USDT',
+        'AERO/USDT:USDT','JUP/USDT:USDT','PUMP/USDT:USDT','MOODENG/USDT:USDT',
+        'GOAT/USDT:USDT','FARTCOIN/USDT:USDT','KITE/USDT:USDT','MICHI/USDT:USDT',
+        'BRETT/USDT:USDT','PNUT/USDT:USDT','GME/USDT:USDT'
     ]
     all_data = []
-    loaded_count = 0
     for symbol in training_pairs:
-        try:
-            df = fetch_ohlcv(symbol)
-            if df.empty:
-                print(f"Пропуск {symbol} — данные пустые")
-                continue
-            df = add_features(df)
-            if df.empty:
-                print(f"Пропуск {symbol} — после фич пусто")
-                continue
-            df['target'] = (
-                (df['price_change'].shift(-1) < -0.005)  # мягкая цель — падение >0.5%
-            ).astype(int)
-            all_data.append(df)
-            loaded_count += 1
-        except Exception as e:
-            print(f"Пропуск {symbol}: {e}")
-            continue
-
-    print(f"Успешно загружено {loaded_count} пар для обучения")
-    if not all_data:
-        raise ValueError("Нет данных для обучения модели!")
+        df = fetch_ohlcv(symbol)
+        if df.empty: continue
+        df = add_features(df)
+        if df.empty: continue
+        df['target'] = (df['price_change'].shift(-1) < -0.005).astype(int)
+        all_data.append(df)
 
     df_all = pd.concat(all_data).dropna()
     X = df_all[FEATURES]
@@ -163,7 +148,7 @@ def get_market_data(symbol: str):
 
 
 # ────────────────────────────────────────────────
-#  График и сигнал (без изменений)
+#  График и сигнал
 # ────────────────────────────────────────────────
 
 def create_chart(pair: str, entry_price: float) -> io.BytesIO | None:
@@ -233,6 +218,19 @@ Trade: Mexc Futures
 
 
 def send_signal(pair: str, price: float, prob: float, vol_m: float, change: float):
+    df = fetch_ohlcv(pair)
+    if df.empty: return
+    df = add_features(df)
+    if df.empty: return
+
+    # Фильтр по RSI и BB width (чтобы уменьшить ложняки)
+    if df['rsi'].iloc[-1] < 70:
+        print(f"Пропуск {pair} — RSI {df['rsi'].iloc[-1]:.1f} < 70")
+        return
+    if df['bb_width'].iloc[-1] < 0.05:
+        print(f"Пропуск {pair} — BB width {df['bb_width'].iloc[-1]:.4f} < 0.05")
+        return
+
     text = build_signal_text(pair, price, prob, vol_m, change)
     buf = create_chart(pair, price)
 
