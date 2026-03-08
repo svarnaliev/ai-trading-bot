@@ -30,7 +30,7 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.40   # твой текущий порог
+PROBABILITY_THRESHOLD = 0.40
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change', 'bb_width']
 
@@ -60,7 +60,7 @@ PAIRS = []
 #  Данные и фичи
 # ────────────────────────────────────────────────
 
-def fetch_ohlcv(symbol: str, limit: int = 1500) -> pd.DataFrame:
+def fetch_ohlcv(symbol: str, limit: int = 2000) -> pd.DataFrame:
     try:
         bars = futures_exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=limit)
         df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -89,7 +89,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ────────────────────────────────────────────────
-#  Модель (актуальный список пар 2026)
+#  Модель (новый актуальный список 40 пар)
 # ────────────────────────────────────────────────
 
 def load_or_train_model() -> CatBoostClassifier:
@@ -97,7 +97,7 @@ def load_or_train_model() -> CatBoostClassifier:
         print("Удаляем старую модель...")
         os.remove(MODEL_FILE)
 
-    print("Обучение модели на актуальных фьючерсах 2026...")
+    print("Обучение модели на актуальных 40 парах...")
     training_pairs = [
         'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
         'BNB/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT', 'AVAX/USDT:USDT',
@@ -105,7 +105,10 @@ def load_or_train_model() -> CatBoostClassifier:
         'PEPE/USDT:USDT', 'WIF/USDT:USDT', 'BONK/USDT:USDT', 'POPCAT/USDT:USDT',
         'BRETT/USDT:USDT', 'PNUT/USDT:USDT', 'GOAT/USDT:USDT', 'FARTCOIN/USDT:USDT',
         'MOG/USDT:USDT', 'TURBO/USDT:USDT', 'NEIRO/USDT:USDT', 'AERO/USDT:USDT',
-        'JUP/USDT:USDT', 'PUMP/USDT:USDT', 'MOODENG/USDT:USDT', 'KITE/USDT:USDT'
+        'JUP/USDT:USDT', 'MOODENG/USDT:USDT', 'KITE/USDT:USDT', 'MICHI/USDT:USDT',
+        'PENGU/USDT:USDT', 'FLOKI/USDT:USDT', 'SHIB/USDT:USDT', 'DOGS/USDT:USDT',
+        'MEW/USDT:USDT', 'APT/USDT:USDT', 'ARB/USDT:USDT', 'OP/USDT:USDT',
+        '1000PEPE/USDT:USDT', '1000BONK/USDT:USDT', '1000SHIB/USDT:USDT', '1000FLOKI/USDT:USDT'
     ]
     all_data = []
     loaded_count = 0
@@ -144,7 +147,7 @@ def load_or_train_model() -> CatBoostClassifier:
 
 
 # ────────────────────────────────────────────────
-#  Остальные функции без изменений
+#  Остальные функции (точно как в предыдущем коде)
 # ────────────────────────────────────────────────
 
 def get_market_data(symbol: str):
@@ -232,7 +235,6 @@ def send_signal(pair: str, price: float, prob: float, vol_m: float, change: floa
     df = add_features(df)
     if df.empty: return
 
-    # Фильтр по RSI и BB width
     if df['rsi'].iloc[-1] < 70:
         print(f"Пропуск {pair} — RSI {df['rsi'].iloc[-1]:.1f} < 70")
         return
