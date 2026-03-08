@@ -51,13 +51,12 @@ futures_exchange = ccxt.mexc({
     'apiKey': MEXC_API_KEY,
     'secret': MEXC_API_SECRET,
     'enableRateLimit': True,
-    'rateLimit': 1200,  # 1.2 секунды на запрос
+    'rateLimit': 1200,
     'options': {'defaultType': 'swap'},
 })
 
 PAIRS = []
-ACTIVE_SIGNALS = []  # [{'pair': str, 'entry_price': float, 'avg_price': float or None, 'timestamp': float}]
-TICKER_CACHE = {}  # кэш тикеров на цикл
+ACTIVE_SIGNALS = []
 
 
 # ────────────────────────────────────────────────
@@ -66,7 +65,7 @@ TICKER_CACHE = {}  # кэш тикеров на цикл
 
 def fetch_ohlcv(symbol: str, limit: int = 2000) -> pd.DataFrame:
     try:
-        time.sleep(1.2)  # задержка от rate limit
+        time.sleep(1.2)
         bars = futures_exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=limit)
         df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -119,7 +118,7 @@ def load_or_train_model() -> CatBoostClassifier:
     loaded_count = 0
     for symbol in training_pairs:
         try:
-            time.sleep(2)  # большая задержка при обучении
+            time.sleep(2)
             df = fetch_ohlcv(symbol)
             if df.empty: continue
             df = add_features(df)
@@ -149,20 +148,16 @@ def load_or_train_model() -> CatBoostClassifier:
 
 
 # ────────────────────────────────────────────────
-#  Рыночные данные с кэшем
+#  Рыночные данные
 # ────────────────────────────────────────────────
 
 def get_market_data(symbol: str):
-    if symbol in TICKER_CACHE:
-        return TICKER_CACHE[symbol]
-
     try:
         ticker = futures_exchange.fetch_ticker(symbol)
         price = ticker['last']
         change = ticker.get('percentage', 0)
         vol = ticker.get('quoteVolume', 0)
         vol_m = round(vol / 1_000_000, 1)
-        TICKER_CACHE[symbol] = (price, change, vol_m)
         return price, change, vol_m
     except Exception as e:
         print(f"Ошибка тикера {symbol}: {e}")
@@ -210,11 +205,14 @@ def create_chart(pair: str, entry_price: float) -> io.BytesIO | None:
 
 
 # ────────────────────────────────────────────────
-#  Сигнал + сохранение
+#  Сигнал с ссылкой на TradingView + victhoreb heatmap
 # ────────────────────────────────────────────────
 
 def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change: float) -> str:
     coin = pair.split('/')[0].replace(':USDT', '')
+    tv_symbol = pair.replace(':USDT', 'USDT')  # DEGOUSDT
+    tv_link = f"https://www.tradingview.com/chart/?symbol=MEXC:{tv_symbol}&interval=60&script=victhoreb-liquidation-heatmap-proxy"
+
     strength = "СИЛЬНЫЙ" if prob > 0.85 else "СРЕДНИЙ" if prob > 0.75 else "СЛАБЫЙ"
     fires = "🔥🔥🔥" if prob > 0.85 else "🔥🔥" if prob > 0.75 else "🔥"
     pos_size = round(price * 200 * 50, 0)
@@ -239,7 +237,11 @@ Trade: Mexc Futures
 
 Уверенность: {int(prob * 100)}%
 Сила сигнала: {int(prob * 100 - 20)}/100
-Общий Score: {int(prob * 100 + int(prob * 100 - 20))}"""
+Общий Score: {int(prob * 100 + int(prob * 100 - 20))}
+
+Проверь зоны ликвидаций в TradingView (с индикатором victhoreb):
+{tv_link}"""
+
     return text
 
 
@@ -249,15 +251,11 @@ def send_signal(pair: str, price: float, prob: float, vol_m: float, change: floa
     df = add_features(df)
     if df.empty: return
 
-    # Фильтры
     if df['rsi'].iloc[-1] < 72:
         print(f"Пропуск {pair} — RSI {df['rsi'].iloc[-1]:.1f} < 72")
         return
     if df['bb_width'].iloc[-1] < 0.06:
         print(f"Пропуск {pair} — BB width {df['bb_width'].iloc[-1]:.4f} < 0.06")
-        return
-    if change > 5 and df['volume_change'].iloc[-1] > -0.1:
-        print(f"Пропуск {pair} — памп на растущем объёме")
         return
 
     text = build_signal_text(pair, price, prob, vol_m, change)
@@ -334,7 +332,6 @@ def main_loop():
     bot.send_message(chat_id=CHAT_ID, text=f"🤖 Бот запущен (Futures) | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     while True:
-        TICKER_CACHE.clear()  # чистим кэш тикеров каждый цикл
         update_pairs_list()
         check_expired_signals()
 
@@ -357,9 +354,9 @@ def main_loop():
             except Exception as e:
                 print(f"Ошибка {pair}: {type(e).__name__}")
 
-            time.sleep(1.2)  # задержка для rate limit
+            time.sleep(1.2)
 
-        if time.time() - last_retrain > 12 * 3600:  # раз в 12 часов
+        if time.time() - last_retrain > 12 * 3600:
             model = load_or_train_model()
             last_retrain = time.time()
 
