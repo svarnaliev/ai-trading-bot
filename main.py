@@ -60,7 +60,7 @@ PAIRS = []
 #  Данные и фичи
 # ────────────────────────────────────────────────
 
-def fetch_ohlcv(symbol: str, limit: int = 1500) -> pd.DataFrame:  # увеличен limit
+def fetch_ohlcv(symbol: str, limit: int = 1500) -> pd.DataFrame:
     try:
         bars = futures_exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=limit)
         df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -80,8 +80,8 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df['macd']         = ta.macd(df['close'])['MACD_12_26_9']
     bb                 = ta.bbands(df['close'], length=20, std=2.0)
     df['bb_lower']     = bb.iloc[:, 0]
-    df['bb_upper']     = bb.iloc[:, 2]  # добавляем upper для ширины
-    df['bb_width']     = (df['bb_upper'] - df['bb_lower']) / df['close']  # новая фича
+    df['bb_upper']     = bb.iloc[:, 2]
+    df['bb_width']     = (df['bb_upper'] - df['bb_lower']) / df['close']
     df['price_change'] = df['close'].pct_change()
     df['volume_change']= df['volume'].pct_change()
 
@@ -89,7 +89,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ────────────────────────────────────────────────
-#  Модель (улучшена)
+#  Модель (улучшена, с пропуском несуществующих пар)
 # ────────────────────────────────────────────────
 
 def load_or_train_model() -> CatBoostClassifier:
@@ -97,33 +97,47 @@ def load_or_train_model() -> CatBoostClassifier:
         print("Удаляем старую модель...")
         os.remove(MODEL_FILE)
 
-    print("Обучение модели на фьючерсах + памп-альтах...")
+    print("Обучение модели на реальных фьючерсах...")
     training_pairs = [
-        'BTC/USDT:USDT','ETH/USDT:USDT','SOL/USDT:USDT','XRP/USDT:USDT',
-        'BNB/USDT:USDT','ADA/USDT:USDT','DOGE/USDT:USDT','AVAX/USDT:USDT',
-        'TRX/USDT:USDT','TON/USDT:USDT','NEAR/USDT:USDT','SUI/USDT:USDT',
-        'PEPE/USDT:USDT','WIF/USDT:USDT','BONK/USDT:USDT','POPCAT/USDT:USDT',
-        'POWER/USDT:USDT','SPX6900/USDT:USDT','BANANAS31/USDT:USDT','PIPPIN/USDT:USDT',
-        'AERO/USDT:USDT','JUP/USDT:USDT','PUMP/USDT:USDT','MOODENG/USDT:USDT',
-        'GOAT/USDT:USDT','FARTCOIN/USDT:USDT','KITE/USDT:USDT','MICHI/USDT:USDT',
-        'BRETT/USDT:USDT','PNUT/USDT:USDT','GME/USDT:USDT'
+        'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
+        'BNB/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT', 'AVAX/USDT:USDT',
+        'TRX/USDT:USDT', 'TON/USDT:USDT', 'NEAR/USDT:USDT', 'SUI/USDT:USDT',
+        'PEPE/USDT:USDT', 'WIF/USDT:USDT', 'BONK/USDT:USDT', 'POPCAT/USDT:USDT',
+        'POWER/USDT:USDT', 'AERO/USDT:USDT', 'JUP/USDT:USDT', 'PUMP/USDT:USDT',
+        'MOODENG/USDT:USDT', 'GOAT/USDT:USDT', 'FARTCOIN/USDT:USDT', 'KITE/USDT:USDT',
+        'MICHI/USDT:USDT', 'BRETT/USDT:USDT', 'PNUT/USDT:USDT', 'GME/USDT:USDT'
     ]
     all_data = []
+    loaded_count = 0
     for symbol in training_pairs:
-        df = fetch_ohlcv(symbol)
-        df = add_features(df)
-        if df.empty: continue
-        df['target'] = (
-            (df['price_change'].shift(-1) < -0.005)  # смягчён target — падение >0.5%
-        ).astype(int)
-        all_data.append(df)
+        try:
+            df = fetch_ohlcv(symbol)
+            if df.empty:
+                print(f"Пропуск {symbol} — данные пустые")
+                continue
+            df = add_features(df)
+            if df.empty:
+                print(f"Пропуск {symbol} — после фич пусто")
+                continue
+            df['target'] = (
+                (df['price_change'].shift(-1) < -0.005)  # мягкая цель — падение >0.5%
+            ).astype(int)
+            all_data.append(df)
+            loaded_count += 1
+        except Exception as e:
+            print(f"Пропуск {symbol}: {e}")
+            continue
+
+    print(f"Успешно загружено {loaded_count} пар для обучения")
+    if not all_data:
+        raise ValueError("Нет данных для обучения модели!")
 
     df_all = pd.concat(all_data).dropna()
     X = df_all[FEATURES]
     y = df_all['target']
 
     X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
-    model = CatBoostClassifier(iterations=800, depth=7, learning_rate=0.05, verbose=0)  # увеличено
+    model = CatBoostClassifier(iterations=1000, depth=8, learning_rate=0.05, verbose=0)
     model.fit(X_tr, y_tr)
     acc = accuracy_score(y_te, model.predict(X_te))
     print(f"Модель обучена | Accuracy: {acc:.4f}")
@@ -132,7 +146,7 @@ def load_or_train_model() -> CatBoostClassifier:
 
 
 # ────────────────────────────────────────────────
-#  Остальные функции (без изменений)
+#  Рыночные данные
 # ────────────────────────────────────────────────
 
 def get_market_data(symbol: str):
@@ -147,6 +161,10 @@ def get_market_data(symbol: str):
         print(f"Ошибка тикера {symbol}: {e}")
         return 0.0, 0.0, 0.0
 
+
+# ────────────────────────────────────────────────
+#  График и сигнал (без изменений)
+# ────────────────────────────────────────────────
 
 def create_chart(pair: str, entry_price: float) -> io.BytesIO | None:
     df = fetch_ohlcv(pair)
