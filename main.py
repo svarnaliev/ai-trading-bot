@@ -89,7 +89,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ────────────────────────────────────────────────
-#  Модель
+#  Модель (актуальный список пар 2026)
 # ────────────────────────────────────────────────
 
 def load_or_train_model() -> CatBoostClassifier:
@@ -97,25 +97,38 @@ def load_or_train_model() -> CatBoostClassifier:
         print("Удаляем старую модель...")
         os.remove(MODEL_FILE)
 
-    print("Обучение модели...")
+    print("Обучение модели на актуальных фьючерсах 2026...")
     training_pairs = [
-        'BTC/USDT:USDT','ETH/USDT:USDT','SOL/USDT:USDT','XRP/USDT:USDT',
-        'BNB/USDT:USDT','ADA/USDT:USDT','DOGE/USDT:USDT','AVAX/USDT:USDT',
-        'TRX/USDT:USDT','TON/USDT:USDT','NEAR/USDT:USDT','SUI/USDT:USDT',
-        'PEPE/USDT:USDT','WIF/USDT:USDT','BONK/USDT:USDT','POPCAT/USDT:USDT',
-        'POWER/USDT:USDT','SPX6900/USDT:USDT','BANANAS31/USDT:USDT','PIPPIN/USDT:USDT',
-        'AERO/USDT:USDT','JUP/USDT:USDT','PUMP/USDT:USDT','MOODENG/USDT:USDT',
-        'GOAT/USDT:USDT','FARTCOIN/USDT:USDT','KITE/USDT:USDT','MICHI/USDT:USDT',
-        'BRETT/USDT:USDT','PNUT/USDT:USDT','GME/USDT:USDT'
+        'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
+        'BNB/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT', 'AVAX/USDT:USDT',
+        'TRX/USDT:USDT', 'TON/USDT:USDT', 'NEAR/USDT:USDT', 'SUI/USDT:USDT',
+        'PEPE/USDT:USDT', 'WIF/USDT:USDT', 'BONK/USDT:USDT', 'POPCAT/USDT:USDT',
+        'BRETT/USDT:USDT', 'PNUT/USDT:USDT', 'GOAT/USDT:USDT', 'FARTCOIN/USDT:USDT',
+        'MOG/USDT:USDT', 'TURBO/USDT:USDT', 'NEIRO/USDT:USDT', 'AERO/USDT:USDT',
+        'JUP/USDT:USDT', 'PUMP/USDT:USDT', 'MOODENG/USDT:USDT', 'KITE/USDT:USDT'
     ]
     all_data = []
+    loaded_count = 0
     for symbol in training_pairs:
-        df = fetch_ohlcv(symbol)
-        if df.empty: continue
-        df = add_features(df)
-        if df.empty: continue
-        df['target'] = (df['price_change'].shift(-1) < -0.005).astype(int)
-        all_data.append(df)
+        try:
+            df = fetch_ohlcv(symbol)
+            if df.empty:
+                print(f"Пропуск {symbol} — данные пустые")
+                continue
+            df = add_features(df)
+            if df.empty:
+                print(f"Пропуск {symbol} — после фич пусто")
+                continue
+            df['target'] = (df['price_change'].shift(-1) < -0.005).astype(int)
+            all_data.append(df)
+            loaded_count += 1
+        except Exception as e:
+            print(f"Пропуск {symbol}: {e}")
+            continue
+
+    print(f"Успешно загружено {loaded_count} пар для обучения")
+    if not all_data:
+        raise ValueError("Нет данных для обучения модели!")
 
     df_all = pd.concat(all_data).dropna()
     X = df_all[FEATURES]
@@ -131,7 +144,7 @@ def load_or_train_model() -> CatBoostClassifier:
 
 
 # ────────────────────────────────────────────────
-#  Рыночные данные
+#  Остальные функции без изменений
 # ────────────────────────────────────────────────
 
 def get_market_data(symbol: str):
@@ -146,10 +159,6 @@ def get_market_data(symbol: str):
         print(f"Ошибка тикера {symbol}: {e}")
         return 0.0, 0.0, 0.0
 
-
-# ────────────────────────────────────────────────
-#  График и сигнал
-# ────────────────────────────────────────────────
 
 def create_chart(pair: str, entry_price: float) -> io.BytesIO | None:
     df = fetch_ohlcv(pair)
@@ -223,7 +232,7 @@ def send_signal(pair: str, price: float, prob: float, vol_m: float, change: floa
     df = add_features(df)
     if df.empty: return
 
-    # Фильтр по RSI и BB width (чтобы уменьшить ложняки)
+    # Фильтр по RSI и BB width
     if df['rsi'].iloc[-1] < 70:
         print(f"Пропуск {pair} — RSI {df['rsi'].iloc[-1]:.1f} < 70")
         return
