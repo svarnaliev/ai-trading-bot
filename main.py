@@ -205,13 +205,12 @@ def create_chart(pair: str, entry_price: float) -> io.BytesIO | None:
 
 
 # ────────────────────────────────────────────────
-#  Сигнал с ссылкой на TradingView + victhoreb heatmap
+#  Сигнал с новой рабочей ссылкой на Liquidation Levels [LuxAlgo]
 # ────────────────────────────────────────────────
 
 def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change: float) -> str:
-    coin = pair.split('/')[0].replace(':USDT', '')
-    tv_symbol = pair.replace(':USDT', 'USDT')  # DEGOUSDT
-    tv_link = f"https://www.tradingview.com/chart/?symbol=MEXC:{tv_symbol}&interval=60&script=victhoreb-liquidation-heatmap-proxy"
+    coin = pair.split('/')[0].replace(':USDT', '')   # SQD
+    tv_link = f"https://www.tradingview.com/chart/hXHfYTh0/?symbol=MEXC%3A{coin}USDT.P&interval=60&script=VBLeqKvy-Liquidation-Levels-LuxAlgo"
 
     strength = "СИЛЬНЫЙ" if prob > 0.85 else "СРЕДНИЙ" if prob > 0.75 else "СЛАБЫЙ"
     fires = "🔥🔥🔥" if prob > 0.85 else "🔥🔥" if prob > 0.75 else "🔥"
@@ -239,7 +238,7 @@ Trade: Mexc Futures
 Сила сигнала: {int(prob * 100 - 20)}/100
 Общий Score: {int(prob * 100 + int(prob * 100 - 20))}
 
-Проверь зоны ликвидаций в TradingView (с индикатором victhoreb):
+Проверь зоны ликвидаций в TradingView (Liquidation Levels [LuxAlgo]):
 {tv_link}"""
 
     return text
