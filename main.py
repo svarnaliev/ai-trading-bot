@@ -112,7 +112,7 @@ def load_or_train_model() -> CatBoostClassifier:
         'JUP/USDT:USDT', 'MOODENG/USDT:USDT', 'KITE/USDT:USDT', 'UAI/USDT:USDT',
         'PENGU/USDT:USDT', 'FLOKI/USDT:USDT', 'SHIB/USDT:USDT', 'DOGS/USDT:USDT',
         'MEW/USDT:USDT', 'APT/USDT:USDT', 'ARB/USDT:USDT', 'OP/USDT:USDT',
-        'PEPE/USDT:USDT', '1000BONK/USDT:USDT', '1000SHIB/USDT:USDT', '1000FLOKI/USDT:USDT'
+        'PEPE/USDT:USDT', '1000BONK/USDT:USDT', 'SHIB/USDT:USDT', 'FLOKI/USDT:USDT'
     ]
     all_data = []
     loaded_count = 0
