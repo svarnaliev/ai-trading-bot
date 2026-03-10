@@ -31,7 +31,7 @@ MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
 PROBABILITY_THRESHOLD = 0.55
-SIGNAL_LIFETIME = 10800  # 3 часа
+SIGNAL_LIFETIME = 9000  # 2.5 часа (150 минут) — оптимально для 1H
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change', 'bb_width']
 
@@ -93,7 +93,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ────────────────────────────────────────────────
-#  Модель
+#  Модель (без изменений)
 # ────────────────────────────────────────────────
 
 def load_or_train_model() -> CatBoostClassifier:
@@ -105,14 +105,14 @@ def load_or_train_model() -> CatBoostClassifier:
     training_pairs = [
         'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
         'BNB/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT', 'AVAX/USDT:USDT',
-        'TRX/USDT:USDT', 'POWER/USDT:USDT', 'NEAR/USDT:USDT', 'SUI/USDT:USDT',
-        'PEPE/USDT:USDT', 'WIF/USDT:USDT', 'SIREN/USDT:USDT', 'POPCAT/USDT:USDT',
+        'TRX/USDT:USDT', 'TON/USDT:USDT', 'NEAR/USDT:USDT', 'SUI/USDT:USDT',
+        'PEPE/USDT:USDT', 'WIF/USDT:USDT', 'BONK/USDT:USDT', 'POPCAT/USDT:USDT',
         'BRETT/USDT:USDT', 'PNUT/USDT:USDT', 'GOAT/USDT:USDT', 'FARTCOIN/USDT:USDT',
-        'RIVER/USDT:USDT', 'TURBO/USDT:USDT', 'MYX/USDT:USDT', 'AERO/USDT:USDT',
-        'JUP/USDT:USDT', 'MOODENG/USDT:USDT', 'KITE/USDT:USDT', 'UAI/USDT:USDT',
+        'MOG/USDT:USDT', 'TURBO/USDT:USDT', 'NEIRO/USDT:USDT', 'AERO/USDT:USDT',
+        'JUP/USDT:USDT', 'MOODENG/USDT:USDT', 'KITE/USDT:USDT', 'MICHI/USDT:USDT',
         'PENGU/USDT:USDT', 'FLOKI/USDT:USDT', 'SHIB/USDT:USDT', 'DOGS/USDT:USDT',
         'MEW/USDT:USDT', 'APT/USDT:USDT', 'ARB/USDT:USDT', 'OP/USDT:USDT',
-        'PEPE/USDT:USDT', '1000BONK/USDT:USDT', 'SHIB/USDT:USDT', 'FLOKI/USDT:USDT'
+        '1000PEPE/USDT:USDT', '1000BONK/USDT:USDT', '1000SHIB/USDT:USDT', '1000FLOKI/USDT:USDT'
     ]
     all_data = []
     loaded_count = 0
@@ -165,7 +165,7 @@ def get_market_data(symbol: str):
 
 
 # ────────────────────────────────────────────────
-#  График
+#  График (без изменений)
 # ────────────────────────────────────────────────
 
 def create_chart(pair: str, entry_price: float) -> io.BytesIO | None:
@@ -205,16 +205,20 @@ def create_chart(pair: str, entry_price: float) -> io.BytesIO | None:
 
 
 # ────────────────────────────────────────────────
-#  Сигнал с новой рабочей ссылкой на Liquidation Levels [LuxAlgo]
+#  Сигнал — исправлено отображение цен с малым количеством нулей
 # ────────────────────────────────────────────────
 
 def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change: float) -> str:
-    coin = pair.split('/')[0].replace(':USDT', '')   # SQD
-    tv_link = f"https://www.tradingview.com/chart/hXHfYTh0/?symbol=MEXC%3A{coin}USDT.P&interval=60&script=VBLeqKvy-Liquidation-Levels-LuxAlgo"
-
+    coin = pair.split('/')[0].replace(':USDT', '')
     strength = "СИЛЬНЫЙ" if prob > 0.85 else "СРЕДНИЙ" if prob > 0.75 else "СЛАБЫЙ"
     fires = "🔥🔥🔥" if prob > 0.85 else "🔥🔥" if prob > 0.75 else "🔥"
     pos_size = round(price * 200 * 50, 0)
+
+    # Форматируем цены с высокой точностью (до 12 знаков)
+    price_str = f"{price:.12f}".rstrip('0').rstrip('.')
+    tp1_str = f"{round(price * 0.95, 12):.12f}".rstrip('0').rstrip('.')
+    tp2_str = f"{round(price * 0.90, 12):.12f}".rstrip('0').rstrip('.')
+    avg_str = f"{round(price * 1.06, 12):.12f}".rstrip('0').rstrip('.')
 
     text = f"""🔴 {coin} {fires} {strength}
 x200 / {pos_size}$ / {vol_m}M / {change:+.4f}
@@ -224,13 +228,13 @@ Trade: Mexc Futures
 Направление: Разворот ВНИЗ
 Действие: SHORT
 
-Текущая цена: {price}
-Цель 1: {round(price * 0.95, 6)}
-Цель 2: {round(price * 0.90, 6)}"""
+Текущая цена: {price_str}
+Цель 1: {tp1_str}
+Цель 2: {tp2_str}"""
 
-    avg_level = round(price * 1.06, 6)
+    avg_level = round(price * 1.06, 12)
     if avg_level > price:
-        text += f"\nУсреднение: на +6% ≈ {avg_level}"
+        text += f"\nУсреднение: на +6% ≈ {avg_str}"
 
     text += f"""
 
@@ -239,7 +243,7 @@ Trade: Mexc Futures
 Общий Score: {int(prob * 100 + int(prob * 100 - 20))}
 
 Проверь зоны ликвидаций в TradingView (Liquidation Levels [LuxAlgo]):
-{tv_link}"""
+https://www.tradingview.com/chart/hXHfYTh0/?symbol=MEXC%3A{coin}USDT.P&interval=60&script=VBLeqKvy-Liquidation-Levels-LuxAlgo"""
 
     return text
 
@@ -264,7 +268,7 @@ def send_signal(pair: str, price: float, prob: float, vol_m: float, change: floa
         bot.send_photo(chat_id=CHAT_ID, photo=buf, caption=text)
         print(f"Сигнал отправлен → {pair} ({int(prob*100)}%)")
 
-        avg_level = round(price * 1.06, 6) if round(price * 1.06, 6) > price else None
+        avg_level = round(price * 1.06, 12) if round(price * 1.06, 12) > price else None
         ACTIVE_SIGNALS.append({
             'pair': pair,
             'entry_price': price,
@@ -293,10 +297,10 @@ def check_expired_signals():
                 avg = signal['avg_price']
 
                 if price < entry:
-                    msg = f"✅ Сигнал {pair} отработал! Цена ниже входа ({price:.6f} < {entry:.6f}) — профит."
+                    msg = f"✅ Сигнал {pair} отработал! Цена ниже входа ({price:.12f} < {entry:.12f}) — профит."
                 else:
                     close_level = avg if avg else entry
-                    msg = f"⚠️ Сигнал {pair} не сработал за 3 часа. Закрывай на {close_level:.6f} (не в минус). Текущая цена: {price:.6f}"
+                    msg = f"⚠️ Сигнал {pair} не сработал за 2.5 часа. Закрывай на {close_level:.12f} (не в минус). Текущая цена: {price:.12f}"
 
                 bot.send_message(chat_id=CHAT_ID, text=msg)
                 print(msg)
