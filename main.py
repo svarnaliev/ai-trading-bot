@@ -30,8 +30,8 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.65
-SIGNAL_LIFETIME = 9000  # 2.5 часа (150 минут) — оптимально для 1H
+PROBABILITY_THRESHOLD = 0.65   # ← подняли по твоей просьбе
+SIGNAL_LIFETIME = 9000         # 2.5 часа
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change', 'bb_width']
 
@@ -93,7 +93,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ────────────────────────────────────────────────
-#  Модель (без изменений)
+#  Модель
 # ────────────────────────────────────────────────
 
 def load_or_train_model() -> CatBoostClassifier:
@@ -105,14 +105,14 @@ def load_or_train_model() -> CatBoostClassifier:
     training_pairs = [
         'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
         'BNB/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT', 'AVAX/USDT:USDT',
-        'TRX/USDT:USDT', 'MYX/USDT:USDT', 'NEAR/USDT:USDT', 'SUI/USDT:USDT',
-        'PEPE/USDT:USDT', 'WIF/USDT:USDT', 'UAI/USDT:USDT', 'POPCAT/USDT:USDT',
+        'TRX/USDT:USDT', 'TON/USDT:USDT', 'NEAR/USDT:USDT', 'SUI/USDT:USDT',
+        'PEPE/USDT:USDT', 'WIF/USDT:USDT', 'BONK/USDT:USDT', 'POPCAT/USDT:USDT',
         'BRETT/USDT:USDT', 'PNUT/USDT:USDT', 'GOAT/USDT:USDT', 'FARTCOIN/USDT:USDT',
-        'PIPPIN/USDT:USDT', 'TURBO/USDT:USDT', 'POWER/USDT:USDT', 'AERO/USDT:USDT',
-        'JUP/USDT:USDT', 'MOODENG/USDT:USDT', 'KITE/USDT:USDT', 'RIVER/USDT:USDT',
-        'PENGU/USDT:USDT', 'FLOKI/USDT:USDT', 'ARCSOL/USDT:USDT', 'DOGS/USDT:USDT',
+        'MOG/USDT:USDT', 'TURBO/USDT:USDT', 'NEIRO/USDT:USDT', 'AERO/USDT:USDT',
+        'JUP/USDT:USDT', 'MOODENG/USDT:USDT', 'KITE/USDT:USDT', 'MICHI/USDT:USDT',
+        'PENGU/USDT:USDT', 'FLOKI/USDT:USDT', 'SHIB/USDT:USDT', 'DOGS/USDT:USDT',
         'MEW/USDT:USDT', 'APT/USDT:USDT', 'ARB/USDT:USDT', 'OP/USDT:USDT',
-        'PEPE/USDT:USDT', '1000BONK/USDT:USDT', 'SHIB/USDT:USDT', 'FLOKI/USDT:USDT'
+        '1000PEPE/USDT:USDT', '1000BONK/USDT:USDT', '1000SHIB/USDT:USDT', '1000FLOKI/USDT:USDT'
     ]
     all_data = []
     loaded_count = 0
@@ -165,7 +165,7 @@ def get_market_data(symbol: str):
 
 
 # ────────────────────────────────────────────────
-#  График (без изменений)
+#  График
 # ────────────────────────────────────────────────
 
 def create_chart(pair: str, entry_price: float) -> io.BytesIO | None:
@@ -205,16 +205,17 @@ def create_chart(pair: str, entry_price: float) -> io.BytesIO | None:
 
 
 # ────────────────────────────────────────────────
-#  Сигнал — исправлено отображение цен с малым количеством нулей
+#  Сигнал (только три изменения по твоей просьбе)
 # ────────────────────────────────────────────────
 
 def build_signal_text(pair: str, price: float, prob: float, vol_m: float, change: float) -> str:
     coin = pair.split('/')[0].replace(':USDT', '')
+    tv_link = f"https://www.tradingview.com/chart/hXHfYTh0/?symbol=MEXC%3A{coin}USDT.P&interval=60&script=VBLeqKvy-Liquidation-Levels-LuxAlgo"
+
     strength = "СИЛЬНЫЙ" if prob > 0.85 else "СРЕДНИЙ" if prob > 0.75 else "СЛАБЫЙ"
     fires = "🔥🔥🔥" if prob > 0.85 else "🔥🔥" if prob > 0.75 else "🔥"
     pos_size = round(price * 200 * 50, 0)
 
-    # Форматируем цены с высокой точностью (до 12 знаков)
     price_str = f"{price:.12f}".rstrip('0').rstrip('.')
     tp1_str = f"{round(price * 0.95, 12):.12f}".rstrip('0').rstrip('.')
     tp2_str = f"{round(price * 0.90, 12):.12f}".rstrip('0').rstrip('.')
@@ -243,7 +244,7 @@ Trade: Mexc Futures
 Общий Score: {int(prob * 100 + int(prob * 100 - 20))}
 
 Проверь зоны ликвидаций в TradingView (Liquidation Levels [LuxAlgo]):
-https://www.tradingview.com/chart/hXHfYTh0/?symbol=MEXC%3A{coin}USDT.P&interval=60&script=VBLeqKvy-Liquidation-Levels-LuxAlgo"""
+{tv_link}"""
 
     return text
 
@@ -260,6 +261,16 @@ def send_signal(pair: str, price: float, prob: float, vol_m: float, change: floa
     if df['bb_width'].iloc[-1] < 0.06:
         print(f"Пропуск {pair} — BB width {df['bb_width'].iloc[-1]:.4f} < 0.06")
         return
+
+    # === ТВОИ ТРИ ИЗМЕНЕНИЯ ===
+    if change > 5 and df['volume_change'].iloc[-1] > 0:
+        print(f"Пропуск {pair} — памп на растущем объёме")
+        return
+
+    if price > df['high'].rolling(window=200).max().iloc[-2]:
+        print(f"Пропуск {pair} — новый ATH")
+        return
+    # =========================
 
     text = build_signal_text(pair, price, prob, vol_m, change)
     buf = create_chart(pair, price)
