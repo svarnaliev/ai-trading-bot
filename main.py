@@ -30,7 +30,7 @@ INTERVAL_SECONDS = 900
 MODEL_FILE = 'catboost_model.cbm'
 
 MIN_DATA_LENGTH = 50
-PROBABILITY_THRESHOLD = 0.55
+PROBABILITY_THRESHOLD = 0.65
 SIGNAL_LIFETIME = 9000  # 2.5 часа (150 минут) — оптимально для 1H
 
 FEATURES = ['ema200', 'rsi', 'macd', 'bb_lower', 'price_change', 'volume_change', 'bb_width']
