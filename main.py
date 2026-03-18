@@ -404,7 +404,29 @@ def update_pairs_list():
             print(f"Ошибка {attempt+1}/3: {type(e).__name__} — {str(e)}")
             time.sleep(5)
     print("Все попытки провалились. Продолжаем со старым списком.")
-    
+
+def load_last_index():
+    if os.path.exists(LAST_INDEX_FILE):
+        try:
+            with open(LAST_INDEX_FILE, 'r') as f:
+                idx = int(f.read().strip())
+                print(f"Загружен индекс: {idx}")
+                return idx
+        except:
+            print("Ошибка чтения индекса, начинаем с 0")
+            return 0
+    print("Файл индекса не найден, начинаем с 0")
+    return 0
+
+
+def save_last_index(idx):
+    try:
+        with open(LAST_INDEX_FILE, 'w') as f:
+            f.write(str(idx))
+        print(f"Сохранён индекс: {idx}")
+    except Exception as e:
+        print(f"Ошибка сохранения индекса: {e}")    
+
 if __name__ == '__main__':
     update_pairs_list()
     threading.Thread(target=main_loop, daemon=True).start()
