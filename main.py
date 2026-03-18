@@ -384,7 +384,27 @@ def main_loop():
 
         print(f"[{now_str}] Итерация завершена → сразу следующая")
 
-
+def update_pairs_list():
+    global PAIRS
+    for attempt in range(3):
+        try:
+            print(f"Попытка {attempt+1}/3 обновления списка пар...")
+            markets = public_exchange.load_markets(reload=True)
+            futures_pairs = [s for s, m in markets.items() if m.get('swap') and 'USDT' in s and m.get('active')]
+            new_pairs = sorted(futures_pairs, key=lambda s: float(markets[s].get('info', {}).get('quoteVolume', 0) or 0), reverse=True)
+            print(f"Загружено новых пар: {len(new_pairs)}")
+            if len(new_pairs) > 0:
+                PAIRS[:] = new_pairs
+                print(f"Список обновлён: {len(PAIRS)} пар")
+                return
+            else:
+                print("Список пуст, ждём 5 сек...")
+                time.sleep(5)
+        except Exception as e:
+            print(f"Ошибка {attempt+1}/3: {type(e).__name__} — {str(e)}")
+            time.sleep(5)
+    print("Все попытки провалились. Продолжаем со старым списком.")
+    
 if __name__ == '__main__':
     update_pairs_list()
     threading.Thread(target=main_loop, daemon=True).start()
