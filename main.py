@@ -389,7 +389,7 @@ def update_pairs_list():
     for attempt in range(3):
         try:
             print(f"Попытка {attempt+1}/3 обновления списка пар...")
-            markets = public_exchange.load_markets(reload=True)
+            markets = futures_exchange.load_markets(reload=True)
             futures_pairs = [s for s, m in markets.items() if m.get('swap') and 'USDT' in s and m.get('active')]
             new_pairs = sorted(futures_pairs, key=lambda s: float(markets[s].get('info', {}).get('quoteVolume', 0) or 0), reverse=True)
             print(f"Загружено новых пар: {len(new_pairs)}")
