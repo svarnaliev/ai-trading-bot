@@ -32,9 +32,9 @@ def ping():
 
 # Константы
 TIMEFRAME = '1h'
-MODEL_FILE = 'catboost_dump_v2.cbm'
+MODEL_FILE = 'catboost_dump_v4.cbm'
 LAST_INDEX_FILE = 'last_pair_index.txt'
-DATASET_FILE = 'dump_dataset_v3.csv'
+DATASET_FILE = 'dump_dataset_v4.csv'
 SIGNALS_LOG = 'signals_log.csv'
 
 MIN_DATA_LENGTH = 50
